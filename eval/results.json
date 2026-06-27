@@ -1,0 +1,46 @@
+{
+  "per_case": [
+    {
+      "question": "What are the competing approaches to long-context retrieval in LLMs?",
+      "claim_faithfulness": 0.875,
+      "citation_hallucination_rate": 0.2,
+      "contradiction_coverage": 0.0,
+      "total_claims": 32,
+      "grounded_claims": 28,
+      "total_citations": 5,
+      "hallucinated_citations": 1,
+      "expected_contradictions": 0,
+      "found_contradictions": 0
+    },
+    {
+      "question": "What are the tradeoffs between RAG and fine-tuning for LLM domain adaptation?",
+      "claim_faithfulness": 0.875,
+      "citation_hallucination_rate": 0.0,
+      "contradiction_coverage": 0.0,
+      "total_claims": 8,
+      "grounded_claims": 7,
+      "total_citations": 1,
+      "hallucinated_citations": 0,
+      "expected_contradictions": 0,
+      "found_contradictions": 0
+    },
+    {
+      "question": "How do instruction-following retrieval models compare with standard dense retrievers?",
+      "claim_faithfulness": 1.0,
+      "citation_hallucination_rate": 0.0,
+      "contradiction_coverage": 0.0,
+      "total_claims": 8,
+      "grounded_claims": 8,
+      "total_citations": 2,
+      "hallucinated_citations": 0,
+      "expected_contradictions": 0,
+      "found_contradictions": 0
+    }
+  ],
+  "aggregate": {
+    "claim_faithfulness": 0.9166666666666666,
+    "citation_hallucination_rate": 0.06666666666666667,
+    "contradiction_coverage": 0.0,
+    "case_count": 3.0
+  }
+}

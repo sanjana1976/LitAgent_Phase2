@@ -1,0 +1,48 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment and secrets
+.env
+.env.local
+*.pem
+
+# SQLite / local data
+*.sqlite3
+*.db
+data/
+
+# IDE and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Build / dist
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Logs
+logs/
+*.log
+
+# Generated literature reviews (LitSynth output)
+research reviews/*.md
+!research reviews/.gitkeep

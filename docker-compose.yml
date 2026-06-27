@@ -1,0 +1,63 @@
+services:
+  ui:
+    build: .
+    image: litsynth:latest
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      PROJECT_ROOT: /app
+      DATABASE_PATH: /app/data/papers.sqlite3
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+      - type: bind
+        source: "./research reviews"
+        target: "/app/research reviews"
+    command:
+      - streamlit
+      - run
+      - streamlit_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+    restart: unless-stopped
+
+  cli:
+    profiles:
+      - cli
+    build: .
+    image: litsynth:latest
+    env_file:
+      - .env
+    environment:
+      PROJECT_ROOT: /app
+      DATABASE_PATH: /app/data/papers.sqlite3
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+      - type: bind
+        source: "./research reviews"
+        target: "/app/research reviews"
+    stdin_open: true
+    tty: true
+    command:
+      - python
+      - main.py
+      - chat
+
+  test:
+    profiles:
+      - test
+    build: .
+    image: litsynth:latest
+    environment:
+      OPENAI_API_KEY: dummy-key-for-tests
+      PROJECT_ROOT: /app
+      DATABASE_PATH: /app/data/papers.sqlite3
+    command:
+      - python
+      - -m
+      - pytest

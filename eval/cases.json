@@ -1,0 +1,17 @@
+[
+  {
+    "question": "What are the competing approaches to long-context retrieval in LLMs?",
+    "expected_contradiction_keys": [],
+    "notes": "Demo question for long-context retrieval. Claim faithfulness and citation hallucination are scored from the generated artifact; contradiction coverage is zero unless the saved result contains a manually labeled paper-pair key."
+  },
+  {
+    "question": "What are the tradeoffs between RAG and fine-tuning for LLM domain adaptation?",
+    "expected_contradiction_keys": [],
+    "notes": "Expected to surface method tradeoffs. Exact contradiction paper ids depend on live retrieval, so this starter label leaves coverage empty until a run is manually labeled."
+  },
+  {
+    "question": "How do instruction-following retrieval models compare with standard dense retrievers?",
+    "expected_contradiction_keys": [],
+    "notes": "Checks whether the system stays on retrieval and ranking, not generic LLM summaries. Exact contradiction keys should be filled after reviewing a saved run."
+  }
+]
