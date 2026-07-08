@@ -15,6 +15,7 @@ from db.database import Database, DatabaseError
 from db.queries import insert_permission_audit
 from guardrails.output import TurnToolTracker, apply_output_guardrails
 from guardrails.permissions import GuardrailError, PermissionManager
+from tools.context import set_tool_session_id
 from tools.registry import get_registered_tools
 from tools.tools_registry import list_tool_signatures
 
@@ -190,6 +191,7 @@ class AgentManager:
         """
         Run iterative tool-use loop until a final assistant answer is produced.
         """
+        set_tool_session_id(session_id)
         messages: list[BaseMessage] = [self._system_message]
         if context_note:
             messages.append(SystemMessage(content=f"Session context: {context_note}"))

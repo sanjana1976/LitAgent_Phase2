@@ -1,0 +1,220 @@
+{
+  "question": "What are methods for detecting contradictory claims across research papers?",
+  "review_text": "Synthesized review for: What are methods for detecting contradictory claims across research papers?",
+  "citations_used": [
+    "arxiv:demo1",
+    "arxiv:demo2",
+    "arxiv:demo3"
+  ],
+  "hallucinated_citations": [],
+  "contradictions_found": 1,
+  "confidence_score": 0.875,
+  "papers": [
+    {
+      "paper_id": "arxiv:demo1",
+      "title": "Demo paper one",
+      "authors": [
+        "Smith, A."
+      ],
+      "abstract": null,
+      "year": 2024,
+      "venue": "Demo",
+      "url": "https://example.org/arxiv:demo1",
+      "api_source": "",
+      "sections": {},
+      "full_text": null,
+      "has_pdf": true,
+      "text_tier": "none",
+      "relevance_score": 0.8
+    },
+    {
+      "paper_id": "arxiv:demo2",
+      "title": "Demo paper two",
+      "authors": [
+        "Smith, A."
+      ],
+      "abstract": null,
+      "year": 2024,
+      "venue": "Demo",
+      "url": "https://example.org/arxiv:demo2",
+      "api_source": "",
+      "sections": {},
+      "full_text": null,
+      "has_pdf": true,
+      "text_tier": "none",
+      "relevance_score": 0.8
+    },
+    {
+      "paper_id": "arxiv:demo3",
+      "title": "Demo paper three",
+      "authors": [
+        "Smith, A."
+      ],
+      "abstract": null,
+      "year": 2024,
+      "venue": "Demo",
+      "url": "https://example.org/arxiv:demo3",
+      "api_source": "",
+      "sections": {},
+      "full_text": null,
+      "has_pdf": true,
+      "text_tier": "none",
+      "relevance_score": 0.8
+    },
+    {
+      "paper_id": "arxiv:con1",
+      "title": "Paper arxiv:con1",
+      "authors": [
+        "Smith, A."
+      ],
+      "abstract": null,
+      "year": 2024,
+      "venue": "Demo",
+      "url": "https://example.org/arxiv:con1",
+      "api_source": "",
+      "sections": {},
+      "full_text": null,
+      "has_pdf": true,
+      "text_tier": "none",
+      "relevance_score": 0.8
+    },
+    {
+      "paper_id": "arxiv:con2",
+      "title": "Paper arxiv:con2",
+      "authors": [
+        "Smith, A."
+      ],
+      "abstract": null,
+      "year": 2024,
+      "venue": "Demo",
+      "url": "https://example.org/arxiv:con2",
+      "api_source": "",
+      "sections": {},
+      "full_text": null,
+      "has_pdf": true,
+      "text_tier": "none",
+      "relevance_score": 0.8
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "2a2b775991d540048702a967bfad21f1",
+      "paper_id": "arxiv:demo1",
+      "claim": "Claim 1 about the literature.",
+      "evidence_quote": "Evidence sentence 1 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "814e26ec7a5b4feca5411b91ffbfdc57",
+      "paper_id": "arxiv:demo2",
+      "claim": "Claim 2 about the literature.",
+      "evidence_quote": "Evidence sentence 2 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "b3ca0581233e434d836e804583b80d54",
+      "paper_id": "arxiv:demo3",
+      "claim": "Claim 3 about the literature.",
+      "evidence_quote": "Evidence sentence 3 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "bf29bd7945cc4cd7acdc098819c2edae",
+      "paper_id": "arxiv:demo1",
+      "claim": "Claim 4 about the literature.",
+      "evidence_quote": "Evidence sentence 4 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "d8fec592f903485890c10238ad05c8e8",
+      "paper_id": "arxiv:demo2",
+      "claim": "Claim 5 about the literature.",
+      "evidence_quote": "Evidence sentence 5 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "c96587499a664566956a77b3bc858302",
+      "paper_id": "arxiv:demo3",
+      "claim": "Claim 6 about the literature.",
+      "evidence_quote": "Evidence sentence 6 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "3c3d1b99a1b04122be8dc7653a811472",
+      "paper_id": "arxiv:demo1",
+      "claim": "Claim 7 about the literature.",
+      "evidence_quote": "Evidence sentence 7 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "bd914c615fcd4744a034ce628023b402",
+      "paper_id": "arxiv:demo2",
+      "claim": "Claim 8 about the literature.",
+      "evidence_quote": "Evidence sentence 8 from the source text.",
+      "confidence": 0.4,
+      "grounded": false,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    }
+  ],
+  "contradictions": [
+    {
+      "contradiction_id": "f14b70936b71484ba68b33284fc88099",
+      "paper_a": "arxiv:con1",
+      "paper_b": "arxiv:con2",
+      "claim_a": "Method A reports higher accuracy.",
+      "claim_b": "Method B reports higher accuracy.",
+      "tension_type": "contradiction",
+      "explanation": "Competing performance claims."
+    }
+  ],
+  "citation_checks": [
+    {
+      "citation_key": "[Author0 2024]",
+      "resolved_paper_id": "arxiv:demo1",
+      "is_valid": true
+    },
+    {
+      "citation_key": "[Author1 2024]",
+      "resolved_paper_id": "arxiv:demo2",
+      "is_valid": true
+    },
+    {
+      "citation_key": "[Author2 2024]",
+      "resolved_paper_id": "arxiv:demo3",
+      "is_valid": true
+    },
+    {
+      "citation_key": "[Author3 2024]",
+      "resolved_paper_id": "arxiv:demo1",
+      "is_valid": true
+    },
+    {
+      "citation_key": "[Author4 2024]",
+      "resolved_paper_id": "arxiv:demo2",
+      "is_valid": true
+    }
+  ],
+  "created_at": "2026-07-08T22:15:32.205373Z"
+}

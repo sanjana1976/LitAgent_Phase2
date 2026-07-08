@@ -20,7 +20,11 @@ for path in (SRC, PROJECT_ROOT):
 import streamlit as st  # noqa: E402
 
 from config.config import get_settings  # noqa: E402
+from db.database import Database  # noqa: E402
+from db.init_db import initialize_schema  # noqa: E402
+from db.queries import get_synthesis_run_result_json, list_recent_synthesis_runs  # noqa: E402
 from synthesis.controller import ControllerConfig, SynthesisController  # noqa: E402
+from synthesis.persistence import load_synthesis_state_from_json, persist_synthesis_state  # noqa: E402
 from synthesis.state import SynthesisState  # noqa: E402
 from synthesis.trace_view import (  # noqa: E402
     claim_rows,
@@ -230,6 +234,8 @@ def _run_agentic_synthesis(
     max_reformulations: int,
     word_budget: int,
     sources: tuple[str, ...],
+    database: Database | None = None,
+    session_id: str | None = None,
 ) -> SynthesisState:
     config = ControllerConfig(
         min_relevant_papers=min_relevant_papers,
@@ -237,7 +243,10 @@ def _run_agentic_synthesis(
         word_budget=word_budget,
         sources=sources,
     )
-    return SynthesisController(config=config).run(question)
+    state = SynthesisController(config=config).run(question)
+    if database is not None:
+        persist_synthesis_state(database, session_id, state)
+    return state
 
 
 def _render_hero() -> None:
@@ -334,6 +343,9 @@ def main() -> None:
             "OPENAI_API_KEY is not configured. The UI loads, but live synthesis needs an API key."
         )
 
+    db = Database(settings.database_path)
+    initialize_schema(db)
+
     with st.sidebar:
         st.markdown('<div class="ls-section-title">Run Settings</div>', unsafe_allow_html=True)
         min_relevant_papers = st.slider("Minimum papers before synthesis", 1, 8, 4)
@@ -348,6 +360,31 @@ def main() -> None:
             "Semantic Scholar can rate-limit; arXiv is the safest demo default. "
             "Papers below relevance 0.03 are dropped after ranking."
         )
+
+        st.divider()
+        st.markdown('<div class="ls-section-title">Run History</div>', unsafe_allow_html=True)
+        history_runs = list_recent_synthesis_runs(db, limit=12)
+        if history_runs:
+            labels = {
+                row["id"]: f"#{row['id']} · conf={row['confidence_score']:.2f} · {row['question'][:48]}"
+                for row in history_runs
+            }
+            selected_run_id = st.selectbox(
+                "Load saved run",
+                options=[None, *[row["id"] for row in history_runs]],
+                format_func=lambda run_id: "— new run —" if run_id is None else labels[run_id],
+            )
+            if st.button("Load selected run", use_container_width=True) and selected_run_id is not None:
+                raw = get_synthesis_run_result_json(db, int(selected_run_id))
+                if raw:
+                    loaded = load_synthesis_state_from_json(raw)
+                    if loaded is not None:
+                        st.session_state["synthesis_state"] = loaded
+                        st.rerun()
+                    else:
+                        st.warning("Selected run has no decision trace (legacy row).")
+        else:
+            st.caption("No saved runs yet. Run a question to persist history.")
 
     question = st.text_area(
         "Research question",
@@ -368,6 +405,8 @@ def main() -> None:
                     max_reformulations=max_reformulations,
                     word_budget=word_budget,
                     sources=tuple(selected_sources) or ("arxiv",),
+                    database=db,
+                    session_id="streamlit",
                 )
             except Exception as exc:  # noqa: BLE001 - surface UI failures clearly
                 st.exception(exc)

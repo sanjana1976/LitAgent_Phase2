@@ -1,0 +1,178 @@
+{
+  "question": "How do open-weight models compare to proprietary models on retrieval tasks?",
+  "review_text": "Synthesized review for: How do open-weight models compare to proprietary models on retrieval tasks?",
+  "citations_used": [
+    "arxiv:demo2",
+    "arxiv:demo3",
+    "arxiv:demo1"
+  ],
+  "hallucinated_citations": [
+    "[Ghost 2099]"
+  ],
+  "contradictions_found": 0,
+  "confidence_score": 0.6,
+  "papers": [
+    {
+      "paper_id": "arxiv:demo1",
+      "title": "Demo paper one",
+      "authors": [
+        "Smith, A."
+      ],
+      "abstract": null,
+      "year": 2024,
+      "venue": "Demo",
+      "url": "https://example.org/arxiv:demo1",
+      "api_source": "",
+      "sections": {},
+      "full_text": null,
+      "has_pdf": true,
+      "text_tier": "none",
+      "relevance_score": 0.8
+    },
+    {
+      "paper_id": "arxiv:demo2",
+      "title": "Demo paper two",
+      "authors": [
+        "Smith, A."
+      ],
+      "abstract": null,
+      "year": 2024,
+      "venue": "Demo",
+      "url": "https://example.org/arxiv:demo2",
+      "api_source": "",
+      "sections": {},
+      "full_text": null,
+      "has_pdf": true,
+      "text_tier": "none",
+      "relevance_score": 0.8
+    },
+    {
+      "paper_id": "arxiv:demo3",
+      "title": "Demo paper three",
+      "authors": [
+        "Smith, A."
+      ],
+      "abstract": null,
+      "year": 2024,
+      "venue": "Demo",
+      "url": "https://example.org/arxiv:demo3",
+      "api_source": "",
+      "sections": {},
+      "full_text": null,
+      "has_pdf": true,
+      "text_tier": "none",
+      "relevance_score": 0.8
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "7d26b9be6baa461a9a4f721af71fcdf6",
+      "paper_id": "arxiv:demo1",
+      "claim": "Claim 1 about the literature.",
+      "evidence_quote": "Evidence sentence 1 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "756e569e29be4fa89eba929557880e73",
+      "paper_id": "arxiv:demo2",
+      "claim": "Claim 2 about the literature.",
+      "evidence_quote": "Evidence sentence 2 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "0fc2b2c87d5a4f3b9220fa6fd62a348b",
+      "paper_id": "arxiv:demo3",
+      "claim": "Claim 3 about the literature.",
+      "evidence_quote": "Evidence sentence 3 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "c21bd9b9b1f64e668392e66a9b28cfd1",
+      "paper_id": "arxiv:demo1",
+      "claim": "Claim 4 about the literature.",
+      "evidence_quote": "Evidence sentence 4 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "7ae7c1f16d3c4e19b55e17faa6574809",
+      "paper_id": "arxiv:demo2",
+      "claim": "Claim 5 about the literature.",
+      "evidence_quote": "Evidence sentence 5 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "03c1d89685214666a286733e1f0953be",
+      "paper_id": "arxiv:demo3",
+      "claim": "Claim 6 about the literature.",
+      "evidence_quote": "Evidence sentence 6 from the source text.",
+      "confidence": 0.8,
+      "grounded": true,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "2be5f52d1d37459480eb3153eca869b1",
+      "paper_id": "arxiv:demo1",
+      "claim": "Claim 7 about the literature.",
+      "evidence_quote": "Evidence sentence 7 from the source text.",
+      "confidence": 0.4,
+      "grounded": false,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    },
+    {
+      "claim_id": "2c667a16471345a1a58f94389e488c58",
+      "paper_id": "arxiv:demo2",
+      "claim": "Claim 8 about the literature.",
+      "evidence_quote": "Evidence sentence 8 from the source text.",
+      "confidence": 0.4,
+      "grounded": false,
+      "grounding_tier": "none",
+      "supporting_paper_id": null
+    }
+  ],
+  "contradictions": [],
+  "citation_checks": [
+    {
+      "citation_key": "[Ghost 2099]",
+      "resolved_paper_id": null,
+      "is_valid": false
+    },
+    {
+      "citation_key": "[Author1 2024]",
+      "resolved_paper_id": "arxiv:demo2",
+      "is_valid": true
+    },
+    {
+      "citation_key": "[Author2 2024]",
+      "resolved_paper_id": "arxiv:demo3",
+      "is_valid": true
+    },
+    {
+      "citation_key": "[Author3 2024]",
+      "resolved_paper_id": "arxiv:demo1",
+      "is_valid": true
+    },
+    {
+      "citation_key": "[Author4 2024]",
+      "resolved_paper_id": "arxiv:demo2",
+      "is_valid": true
+    }
+  ],
+  "created_at": "2026-07-08T22:15:32.201527Z"
+}

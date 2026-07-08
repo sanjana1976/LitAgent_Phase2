@@ -13,7 +13,7 @@ from typing import Any
 
 from synthesis.controller import ControllerConfig, run_agentic_synthesis
 from synthesis.schemas import SynthesisResult
-from tools.context import get_default_database
+from tools.context import get_default_database, get_tool_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -106,5 +106,10 @@ def tool_synthesize_literature_review(
         logger.exception("Could not resolve default database; running without persistence")
         database = None
 
-    result = run_agentic_synthesis(q, config=cfg, database=database)
+    result = run_agentic_synthesis(
+        q,
+        config=cfg,
+        database=database,
+        session_id=get_tool_session_id(),
+    )
     return json.dumps(_result_to_compact_dict(result), ensure_ascii=False)

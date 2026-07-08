@@ -48,7 +48,8 @@ from db.queries import (  # noqa: E402
 from guardrails.permissions import GuardrailError, PermissionManager  # noqa: E402
 from agent.errors import AgentError  # noqa: E402
 from cli.welcome import echo_chat_help, echo_chat_welcome  # noqa: E402
-from synthesis.eval_harness import load_cases, score_synthesis, write_results  # noqa: E402
+from synthesis.eval_harness import load_cases, resolve_case_result, score_synthesis, write_results  # noqa: E402
+from synthesis.persistence import synthesis_result_from_json  # noqa: E402
 from synthesis.schemas import SynthesisResult  # noqa: E402
 from synthesis.controller import ControllerConfig, run_agentic_synthesis  # noqa: E402
 
@@ -88,7 +89,7 @@ def _resolve_review_output_path(
 
 def _synthesis_result_from_json(raw: str) -> SynthesisResult:
     """Parse persisted synthesis result JSON into the pydantic result model."""
-    return SynthesisResult.model_validate(json.loads(raw))
+    return synthesis_result_from_json(raw)
 
 
 @click.group()
@@ -520,6 +521,7 @@ def eval_synthesis(
     db = Database(settings.database_path)
     initialize_schema(db)
 
+    fixtures_dir = settings.project_root / "eval" / "fixtures"
     reports = []
     missing: list[str] = []
 
@@ -539,9 +541,8 @@ def eval_synthesis(
         )
         for case in cases:
             raw = get_latest_synthesis_result_json_for_question(db, case.question)
-            if raw is not None:
-                result = _synthesis_result_from_json(raw)
-            elif live:
+            result = resolve_case_result(case, fixtures_dir=fixtures_dir, db_raw=raw)
+            if result is None and live:
                 if not settings.openai_api_key:
                     raise click.UsageError(
                         "OPENAI_API_KEY is required for --live eval. "
@@ -553,7 +554,7 @@ def eval_synthesis(
                     database=db,
                     session_id="eval",
                 )
-            else:
+            elif result is None:
                 missing.append(case.question)
                 continue
             reports.append(score_synthesis(result, case))

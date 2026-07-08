@@ -861,9 +861,9 @@ def run_agentic_synthesis(
     state = controller.run(question)
     result = state.to_result()
     if database is not None:
-        from synthesis.pipeline import _persist
+        from synthesis.persistence import persist_synthesis_state
 
-        _persist(database, session_id, result)
+        persist_synthesis_state(database, session_id, state)
     if progress is not None:
         progress("agentic synthesis complete")
     return result

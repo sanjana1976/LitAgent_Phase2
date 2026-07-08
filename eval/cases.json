@@ -2,16 +2,133 @@
   {
     "question": "What are the competing approaches to long-context retrieval in LLMs?",
     "expected_contradiction_keys": [],
-    "notes": "Demo question for long-context retrieval. Claim faithfulness and citation hallucination are scored from the generated artifact; contradiction coverage is zero unless the saved result contains a manually labeled paper-pair key."
+    "fixture": "long-context-retrieval.json",
+    "notes": "Baseline long-context retrieval case; 7/8 grounded claims, 1/5 hallucinated citation."
   },
   {
     "question": "What are the tradeoffs between RAG and fine-tuning for LLM domain adaptation?",
-    "expected_contradiction_keys": [],
-    "notes": "Expected to surface method tradeoffs. Exact contradiction paper ids depend on live retrieval, so this starter label leaves coverage empty until a run is manually labeled."
+    "expected_contradiction_keys": ["arxiv:ft1|arxiv:rag1"],
+    "fixture": "rag-vs-finetuning.json",
+    "notes": "RAG vs fine-tuning tradeoffs with one labeled contradiction pair."
   },
   {
     "question": "How do instruction-following retrieval models compare with standard dense retrievers?",
     "expected_contradiction_keys": [],
-    "notes": "Checks whether the system stays on retrieval and ranking, not generic LLM summaries. Exact contradiction keys should be filled after reviewing a saved run."
+    "fixture": "instruction-retrieval.json",
+    "notes": "Fully grounded retrieval comparison."
+  },
+  {
+    "question": "What methods exist for reducing hallucination in LLM-generated summaries?",
+    "expected_contradiction_keys": [],
+    "fixture": "hallucination-reduction.json",
+    "notes": "Higher hallucination rate fixture for guardrail stress testing."
+  },
+  {
+    "question": "How effective are chain-of-thought prompts for complex reasoning tasks?",
+    "expected_contradiction_keys": [],
+    "fixture": "chain-of-thought-reasoning.json",
+    "notes": "Reasoning prompt strategies."
+  },
+  {
+    "question": "What are state-of-the-art approaches to multi-document summarization?",
+    "expected_contradiction_keys": ["arxiv:sum1|arxiv:sum2"],
+    "fixture": "multi-document-summarization.json",
+    "notes": "Multi-doc summarization with labeled contradiction."
+  },
+  {
+    "question": "How do sparse and dense retrieval methods compare for scientific literature search?",
+    "expected_contradiction_keys": [],
+    "fixture": "sparse-vs-dense-retrieval.json",
+    "notes": "Sparse vs dense retrieval for scholarly search."
+  },
+  {
+    "question": "What techniques improve citation accuracy in academic writing assistants?",
+    "expected_contradiction_keys": [],
+    "fixture": "citation-accuracy-assistants.json",
+    "notes": "Citation validation and whitelist strategies."
+  },
+  {
+    "question": "How do transformer architectures scale to very long documents?",
+    "expected_contradiction_keys": [],
+    "fixture": "long-document-transformers.json",
+    "notes": "Long-document transformer scaling."
+  },
+  {
+    "question": "What are competing methods for climate impact assessment using machine learning?",
+    "expected_contradiction_keys": ["arxiv:cli1|arxiv:cli2"],
+    "fixture": "climate-impact-ml.json",
+    "notes": "Climate ML impact assessment with labeled contradiction."
+  },
+  {
+    "question": "How do satellite-based deforestation detection models compare?",
+    "expected_contradiction_keys": [],
+    "fixture": "deforestation-remote-sensing.json",
+    "notes": "Remote sensing deforestation detection."
+  },
+  {
+    "question": "What approaches exist for carbon sequestration measurement with remote sensing?",
+    "expected_contradiction_keys": [],
+    "fixture": "carbon-sequestration-sensing.json",
+    "notes": "Carbon sequestration sensing with elevated hallucination rate."
+  },
+  {
+    "question": "How do ensemble methods compare for weather prediction with deep learning?",
+    "expected_contradiction_keys": [],
+    "fixture": "weather-ensemble-deep-learning.json",
+    "notes": "Weather ensemble deep learning."
+  },
+  {
+    "question": "What are tradeoffs between symbolic and neural approaches to knowledge graphs?",
+    "expected_contradiction_keys": [],
+    "fixture": "symbolic-vs-neural-knowledge-graphs.json",
+    "notes": "Knowledge graph representation tradeoffs."
+  },
+  {
+    "question": "How do agent-based LLM systems handle tool selection errors?",
+    "expected_contradiction_keys": [],
+    "fixture": "agent-tool-selection-errors.json",
+    "notes": "Agent tool selection and recovery."
+  },
+  {
+    "question": "What evaluation metrics best measure faithfulness in abstractive summarization?",
+    "expected_contradiction_keys": [],
+    "fixture": "faithfulness-summarization-metrics.json",
+    "notes": "Faithfulness metrics for summarization eval."
+  },
+  {
+    "question": "How do open-weight models compare to proprietary models on retrieval tasks?",
+    "expected_contradiction_keys": [],
+    "fixture": "open-vs-proprietary-retrieval.json",
+    "notes": "Open vs proprietary model retrieval comparison."
+  },
+  {
+    "question": "What are methods for detecting contradictory claims across research papers?",
+    "expected_contradiction_keys": ["arxiv:con1|arxiv:con2"],
+    "fixture": "contradictory-claims-detection.json",
+    "notes": "Contradiction detection methods with labeled pair."
+  },
+  {
+    "question": "How do PDF parsing pipelines affect downstream claim extraction quality?",
+    "expected_contradiction_keys": [],
+    "fixture": "pdf-parsing-claim-extraction.json",
+    "notes": "PDF parse quality impact on claims."
+  },
+  {
+    "question": "What prompt engineering strategies improve structured JSON outputs from LLMs?",
+    "expected_contradiction_keys": [],
+    "fixture": "structured-json-prompting.json",
+    "notes": "Structured JSON prompting."
+  },
+  {
+    "question": "How do rate limits affect multi-API scholarly search aggregators?",
+    "expected_contradiction_keys": [],
+    "fixture": "multi-api-rate-limits.json",
+    "notes": "Multi-API rate limit handling."
+  },
+  {
+    "question": "What guardrail patterns prevent tool-using agents from unsafe filesystem access?",
+    "expected_contradiction_keys": [],
+    "fixture": "agent-filesystem-guardrails.json",
+    "notes": "Filesystem guardrails for tool-using agents."
   }
 ]

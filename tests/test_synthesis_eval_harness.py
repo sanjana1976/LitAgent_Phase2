@@ -10,6 +10,7 @@ from synthesis.eval_harness import (
     EvalReport,
     aggregate,
     load_cases,
+    resolve_case_result,
     score_synthesis,
     write_results,
 )
@@ -168,6 +169,7 @@ def test_load_cases_from_json(tmp_path: Path) -> None:
                 {
                     "question": "What are RAG tradeoffs?",
                     "expected_contradiction_keys": ["arxiv:1|arxiv:2"],
+                    "fixture": "rag.json",
                     "notes": "demo",
                 }
             ]
@@ -182,5 +184,34 @@ def test_load_cases_from_json(tmp_path: Path) -> None:
             question="What are RAG tradeoffs?",
             expected_contradiction_keys=["arxiv:1|arxiv:2"],
             notes="demo",
+            fixture="rag.json",
         )
     ]
+
+
+def test_resolve_case_result_prefers_fixture(tmp_path: Path) -> None:
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    result = _result(
+        claims=[
+                ClaimRecord(
+                    paper_id="arxiv:1",
+                    claim="demo claim",
+                    evidence_quote="demo quote",
+                    confidence=0.9,
+                    grounded=True,
+                )
+        ]
+    )
+    (fixtures_dir / "demo.json").write_text(
+        json.dumps(result.model_dump(mode="json")),
+        encoding="utf-8",
+    )
+    case = EvalCase(
+        question="q",
+        expected_contradiction_keys=[],
+        fixture="demo.json",
+    )
+    resolved = resolve_case_result(case, fixtures_dir=fixtures_dir, db_raw=None)
+    assert resolved is not None
+    assert len(resolved.claims) == 1

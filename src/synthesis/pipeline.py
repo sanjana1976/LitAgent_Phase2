@@ -219,7 +219,9 @@ def _empty_result(question: str, *, reason: str) -> SynthesisResult:
 
 def _persist(database: Database, session_id: str | None, result: SynthesisResult) -> None:
     """
-    Write one ``synthesis_runs`` row. Persistence failures must not crash the CLI.
+    Write one ``synthesis_runs`` row without trace metadata.
+
+    Prefer :func:`synthesis.persistence.persist_synthesis_state` for agentic runs.
     """
     try:
         payload = result.model_dump(mode="json")

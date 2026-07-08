@@ -36,6 +36,7 @@ class EvalCase:
     question: str
     expected_contradiction_keys: list[str]
     notes: str = ""
+    fixture: str | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ def load_cases(path: Path) -> list[EvalCase]:
                 question=question,
                 expected_contradiction_keys=[str(k).strip() for k in keys if str(k).strip()],
                 notes=str(item.get("notes", "") or ""),
+                fixture=str(item["fixture"]).strip() if item.get("fixture") else None,
             )
         )
     return cases
@@ -99,6 +101,36 @@ def _contradiction_keys(result: SynthesisResult) -> set[str]:
         a, b = sorted((pair.paper_a, pair.paper_b))
         out.add(f"{a}|{b}")
     return out
+
+
+def load_fixture_result(fixtures_dir: Path, fixture_name: str) -> SynthesisResult:
+    """Load a committed offline ``SynthesisResult`` fixture for eval scoring."""
+    path = fixtures_dir / fixture_name
+    if not path.is_file():
+        raise FileNotFoundError(f"eval fixture not found: {path}")
+    from synthesis.persistence import synthesis_result_from_json
+
+    return synthesis_result_from_json(path.read_text(encoding="utf-8"))
+
+
+def resolve_case_result(
+    case: EvalCase,
+    *,
+    fixtures_dir: Path | None,
+    db_raw: str | None,
+) -> SynthesisResult | None:
+    """
+    Resolve a case to a scorable result.
+
+    Priority: committed fixture → saved SQLite run → ``None``.
+    """
+    if fixtures_dir is not None and case.fixture:
+        return load_fixture_result(fixtures_dir, case.fixture)
+    if db_raw is not None:
+        from synthesis.persistence import synthesis_result_from_json
+
+        return synthesis_result_from_json(db_raw)
+    return None
 
 
 def score_synthesis(result: SynthesisResult, case: EvalCase) -> EvalReport:
