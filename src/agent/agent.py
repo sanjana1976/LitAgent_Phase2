@@ -45,6 +45,7 @@ Tool-use policy:
     3. If `hallucinated_citations` is non-empty, add a `### Hallucinated citations (flagged)` section listing them.
     4. If `contradictions` is non-empty, add a `### Contradictions` section summarizing each one in plain English.
   This structured "Papers used" block is mandatory — it is the only way you and the user can refer back to specific papers in later turns. Do NOT omit it.
+- Use `tool_get_review_context` when the user asks a follow-up about a previous literature review ("those papers", "the second paper", "which of them evaluate on X", "summarize the review again") and the paper identifiers are not already visible in this conversation — for example after resuming a session. It returns the last review's question, text, and full paper list for this session. Prefer answering follow-ups from that retained paper set; call `tool_fetch_and_parse_pdf` on a specific paper's URL when the user wants more depth than the review provides.
 
 Guardrails (always enforce):
 - Never delete papers or reading lists.

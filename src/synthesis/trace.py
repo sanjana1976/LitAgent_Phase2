@@ -37,6 +37,7 @@ ActionType = Literal[
     "search",
     "reformulate",
     "fetch_pdf",
+    "filter_relevance",
     "extract_claims",
     "detect_contradictions",
     "hunt_support",
@@ -88,6 +89,12 @@ class FetchPdfParams(_Params):
     url: str | None = None
 
 
+class FilterRelevanceParams(_Params):
+    kind: Literal["filter_relevance"] = "filter_relevance"
+    paper_ids: list[str] = Field(default_factory=list)
+    keep_threshold: int = 6
+
+
 class ExtractClaimsParams(_Params):
     kind: Literal["extract_claims"] = "extract_claims"
     paper_ids: list[str] = Field(default_factory=list)
@@ -122,6 +129,7 @@ StepParams = Annotated[
         SearchParams,
         ReformulateParams,
         FetchPdfParams,
+        FilterRelevanceParams,
         ExtractClaimsParams,
         DetectContradictionsParams,
         GapHuntParams,

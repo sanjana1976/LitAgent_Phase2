@@ -17,6 +17,8 @@ Architecture and design rationale: Design.md
 - Synthesis (A4): agentic LitSynth controller that runs retrieval, claims, contradiction detection, gap hunting, conflict resolution, then synthesis.
 - Decision trace UI (A4): Streamlit app showing the final review beside every traced agent decision, causal parent link, and state effect.
 - Hallucination resistance (A4): verbatim-quote grounding per claim, full-text / abstract / corroborated tiers, whitelisted citations, and validator checks for fake citations.
+- Relevance pipeline: keyword-style query decomposition, sanitized arXiv boolean queries (AND with automatic OR broadening), relevance-preserving retrieval merge across every sub-query, and an LLM relevance gate that drops off-topic papers before claims and synthesis.
+- Assistant memory: chat retains the current review's topic and paper set across turns and resumed sessions via tool_get_review_context and per-session synthesis history.
 - Auto-saved reviews (A4): every synthesize run writes a timestamped markdown file to research reviews/.
 - Guardrails: input blocks, tool tiers, output BibTeX check, and PROJECT_ROOT exports.
 
@@ -147,7 +149,7 @@ Optional guardrail and API overrides are documented in .env.example and Design.m
 - src/cli/: welcome banner and help.
 - src/db/: SQLite schema and queries. Version 4 adds synthesis_runs.
 - src/models/: persistence models.
-- tests/: pytest suite with mocked LLM/API calls. Current suite is 242 tests: 78 A3 and 164 A4.
+- tests/: pytest suite with mocked LLM/API calls. Current suite is 271 tests.
 - research reviews/: auto-generated markdown reviews from synthesize.
 - eval/: labeled cases.json and generated results.json for LitSynth eval.
 - Design.md: source of truth for design decisions.
@@ -160,7 +162,7 @@ Run the test suite:
 
 python -m pytest
 
-There are 242 mocked tests. They cover the A3 code, every LitSynth stage, the agentic controller and its loops, the decision-trace/state models, eval CLI, and UI formatting helpers. CI does not call live APIs. conftest.py sets a dummy OPENAI_API_KEY.
+There are 271 mocked tests. They cover the A3 code, every LitSynth stage (including the relevance gate and keyword query building), the agentic controller and its loops, the decision-trace/state models, review-context recall, eval CLI, and UI formatting helpers. CI does not call live APIs. conftest.py sets a dummy OPENAI_API_KEY.
 
 In Docker: `docker compose --profile test run --rm test` (tests are baked into the image; no extra volume mount).
 

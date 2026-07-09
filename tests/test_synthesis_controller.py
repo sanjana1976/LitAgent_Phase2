@@ -16,6 +16,23 @@ def _cfg(**kwargs: object) -> ControllerConfig:
     return ControllerConfig(**kwargs)
 
 
+def _passthrough_gate(question: str, papers: list[ScoredPaper], **_kw: object):
+    """Relevance-gate hook that keeps every paper (no LLM call)."""
+    return list(papers), {}, True
+
+
+def _log_search(state: SynthesisState, query: str) -> None:
+    """Record a completed search step so ``next_action`` sees the query as done."""
+    state.log(
+        DecisionStep.start(
+            action="search",
+            params=SearchParams(query=query, sources=["arxiv"]),
+            trigger="test setup",
+            rationale="mark query as already searched",
+        )
+    ).complete(result="ok")
+
+
 def _paper(pid: str, title: str = "Paper") -> Paper:
     return Paper(
         paper_id=pid,
@@ -52,6 +69,7 @@ def test_next_action_searches_after_decompose_or_reformulation() -> None:
     assert isinstance(step.params, SearchParams)
     assert step.params.query == "first query"
 
+    _log_search(state, "first query")
     state.log(
         DecisionStep.start(
             action="reformulate",
@@ -68,12 +86,33 @@ def test_next_action_searches_after_decompose_or_reformulation() -> None:
     assert step.parent_step_id == state.trace[-1].step_id
 
 
+def test_next_action_searches_every_sub_query_before_judging_coverage() -> None:
+    state = SynthesisState(
+        question="q",
+        sub_queries=["angle one", "angle two", "angle three"],
+        papers=[_scored("arxiv:1"), _scored("arxiv:2"), _scored("arxiv:3"), _scored("arxiv:4")],
+    )
+    _log_search(state, "angle one")
+
+    step = next_action(state, _cfg(min_relevant_papers=4))
+    assert step.action == "search"
+    assert isinstance(step.params, SearchParams)
+    # Even though the paper target is already met, unsearched angles still run.
+    assert step.params.query == "angle two"
+
+    _log_search(state, "angle two")
+    _log_search(state, "angle three")
+    step = next_action(state, _cfg(min_relevant_papers=4))
+    assert step.action == "synthesize"
+
+
 def test_next_action_reformulates_when_retrieval_is_thin() -> None:
     state = SynthesisState(
         question="q",
         sub_queries=["first query"],
         papers=[_scored("arxiv:1"), _scored("arxiv:2")],
     )
+    _log_search(state, "first query")
     step = next_action(state, _cfg(min_relevant_papers=4))
     assert step.action == "reformulate"
     assert isinstance(step.params, ReformulateParams)
@@ -87,6 +126,7 @@ def test_next_action_stops_after_capped_retry_search_is_still_thin() -> None:
         sub_queries=["q1", "q2"],
         papers=[_scored("arxiv:1")],
     )
+    _log_search(state, "q1")
     state.log(
         DecisionStep.start(
             action="reformulate",
@@ -509,6 +549,7 @@ def test_run_orders_detection_after_claims_and_before_conflict() -> None:
             detect_contradictions=lambda c, p, **kw: [pair],
             generate=lambda prompt, **kw: "Review.",
             validate_cites=lambda text, papers: ([], [], [], 0.0),
+            relevance_filter=_passthrough_gate,
         ),
     )
     state = controller.run("long context retrieval")
@@ -925,6 +966,7 @@ def test_run_wires_existing_loops_with_unbroken_causal_trace() -> None:
             detect_contradictions=detect,
             generate=lambda prompt, **kw: "Review.",
             validate_cites=lambda text, papers: ([], [], [], 0.0),
+            relevance_filter=_passthrough_gate,
         ),
     )
 
@@ -935,6 +977,7 @@ def test_run_wires_existing_loops_with_unbroken_causal_trace() -> None:
         "decompose",
         "search",
         "synthesize",
+        "filter_relevance",
         "extract_claims",
         "extract_claims",
         "detect_contradictions",

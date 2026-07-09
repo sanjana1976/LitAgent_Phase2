@@ -13,8 +13,10 @@ Design notes:
   a try/except and the failure is logged at WARNING level.
 - Deduplication walks a strict priority chain: DOI (lowercased), then the
   arXiv id stripped of any version suffix, then a normalized title.
-- Ranking is intentionally a tiny heuristic - the real relevance ranker is a
-  later pipeline stage; here we just want a stable, sensible ordering.
+- Merging preserves each provider's own relevance ordering and interleaves
+  the per-(query, source) result lists round-robin, so every sub-query angle
+  contributes its best hits before any single angle dominates the cap. The
+  real relevance ranker is a later pipeline stage.
 """
 
 from __future__ import annotations
@@ -22,7 +24,6 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from datetime import date
 from typing import Any
 
 from synthesis.schemas import ResearchQuestion
@@ -93,26 +94,6 @@ def _dedupe_key(paper: Paper) -> tuple[str, str] | None:
     return None
 
 
-def _abstract_present(paper: Paper) -> bool:
-    return bool(paper.abstract and paper.abstract.strip())
-
-
-def _date_ordinal(d: date | None) -> int:
-    return d.toordinal() if isinstance(d, date) else 0
-
-
-def _sort_key(paper: Paper) -> tuple[int, int, int, str]:
-    """Sort: abstract first, citations desc, newest first, title asc."""
-    has_abstract = 1 if _abstract_present(paper) else 0
-    citations = paper.citation_count if paper.citation_count is not None else 0
-    return (
-        -has_abstract,
-        -int(citations),
-        -_date_ordinal(paper.publication_date),
-        (paper.title or "").lower(),
-    )
-
-
 def _resolve_callable(
     source: str,
     overrides: dict[str, SearchCallable] | None,
@@ -146,8 +127,10 @@ def retrieve_papers(
             to override the default A3 search tools (useful for tests).
 
     Returns:
-        A list of :class:`~tools.schemas.Paper` records, deduped and ordered
-        by abstract availability, citation count, recency, and title.
+        A list of :class:`~tools.schemas.Paper` records, deduped, with each
+        provider's relevance ordering preserved and the per-(query, source)
+        result lists interleaved round-robin so every sub-query contributes
+        its top hits before the ``total_limit`` cap is reached.
 
     Notes:
         Failures from individual providers are logged and swallowed so that
@@ -159,7 +142,7 @@ def retrieve_papers(
 
     filters: dict[str, Any] = {"max_results": int(per_query_limit)}
 
-    collected: list[Paper] = []
+    buckets: list[list[Paper]] = []
     for query in queries:
         for source in sources:
             search_fn = _resolve_callable(source, search_callables)
@@ -177,18 +160,23 @@ def retrieve_papers(
                 )
                 continue
             if results:
-                collected.extend(results)
+                buckets.append(list(results))
 
-    seen: dict[tuple[str, str], Paper] = {}
-    untagged: list[Paper] = []
-    for paper in collected:
-        key = _dedupe_key(paper)
-        if key is None:
-            untagged.append(paper)
-            continue
-        if key not in seen:
-            seen[key] = paper
-
-    deduped: list[Paper] = list(seen.values()) + untagged
-    deduped.sort(key=_sort_key)
-    return deduped[: int(total_limit)]
+    limit = int(total_limit)
+    seen: set[tuple[str, str]] = set()
+    merged: list[Paper] = []
+    deepest = max((len(b) for b in buckets), default=0)
+    for position in range(deepest):
+        for bucket in buckets:
+            if position >= len(bucket):
+                continue
+            paper = bucket[position]
+            key = _dedupe_key(paper)
+            if key is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
+            merged.append(paper)
+            if len(merged) >= limit:
+                return merged
+    return merged

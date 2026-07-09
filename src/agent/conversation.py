@@ -14,6 +14,7 @@ from db.queries import (
     clear_conversation_session,
     fetch_conversation_by_session,
     fetch_recent_conversation_summaries,
+    get_latest_synthesis_run_for_session,
     insert_conversation_turn,
     list_reading_list_rows,
 )
@@ -108,6 +109,17 @@ class ConversationManager:
                 parts.append(f"recent_turn_count={len(recent)}")
             except DatabaseError:
                 logger.exception("Could not load recent conversation context")
+            try:
+                run = get_latest_synthesis_run_for_session(self._database, self._session_id)
+                if run is not None:
+                    topic = str(run.get("question") or "").strip()
+                    if topic:
+                        parts.append(
+                            f"last_review_topic={topic!r} "
+                            "(recall papers via tool_get_review_context)"
+                        )
+            except DatabaseError:
+                logger.exception("Could not load last synthesis run context")
         return " | ".join(parts)
 
     def append_turn(

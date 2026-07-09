@@ -83,6 +83,91 @@ def test_tool_returns_compact_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     assert payload["citations_used"] == ["arxiv:1"]
 
 
+def _persist_fake_run(db: Database, session_id: str | None, question: str) -> None:
+    from db.queries import insert_synthesis_run
+
+    result = SynthesisResult(
+        question=question,
+        review_text="A grounded review [Smith 2023].",
+        citations_used=["arxiv:1"],
+        hallucinated_citations=[],
+        contradictions_found=0,
+        confidence_score=0.9,
+        papers=[
+            ScoredPaper(
+                paper_id="arxiv:1",
+                title="A long-context survey",
+                authors=["Alice Smith"],
+                abstract="x",
+                year=2023,
+                api_source="arxiv",
+            )
+        ],
+        claims=[],
+        contradictions=[],
+        citation_checks=[],
+    )
+    insert_synthesis_run(
+        db,
+        session_id=session_id,
+        question=question,
+        review_text=result.review_text,
+        result_json=json.dumps(result.model_dump(mode="json")),
+        confidence_score=result.confidence_score,
+        contradictions_found=0,
+        hallucinated_count=0,
+    )
+
+
+def test_review_context_tool_recalls_session_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    from config.config import get_settings
+    from tools.context import set_tool_session_id
+    from tools.synthesis_tools import tool_get_review_context
+
+    db = Database(get_settings().database_path)
+    initialize_schema(db)
+    _persist_fake_run(db, "other-session", "an older unrelated question")
+    _persist_fake_run(db, "session-42", "long context retrieval")
+
+    set_tool_session_id("session-42")
+    payload = json.loads(tool_get_review_context())
+
+    assert payload["question"] == "long context retrieval"
+    assert payload["from_session"] == "session-42"
+    assert payload["papers"][0]["paper_id"] == "arxiv:1"
+    assert payload["papers"][0]["citation_key"] == "[Smith 2023]"
+
+
+def test_review_context_tool_falls_back_to_latest_overall() -> None:
+    from config.config import get_settings
+    from tools.context import set_tool_session_id
+    from tools.synthesis_tools import tool_get_review_context
+
+    db = Database(get_settings().database_path)
+    initialize_schema(db)
+    _persist_fake_run(db, "someone-else", "the only review anywhere")
+
+    set_tool_session_id("brand-new-session")
+    payload = json.loads(tool_get_review_context())
+
+    assert payload["question"] == "the only review anywhere"
+    assert payload["from_session"] == "someone-else"
+
+
+def test_review_context_tool_reports_missing_review() -> None:
+    from config.config import get_settings
+    from tools.context import set_tool_session_id
+    from tools.synthesis_tools import tool_get_review_context
+
+    db = Database(get_settings().database_path)
+    initialize_schema(db)
+
+    set_tool_session_id(None)
+    payload = json.loads(tool_get_review_context())
+
+    assert "error" in payload
+
+
 def test_synthesis_runs_table_exists_after_init_db(tmp_path: Path) -> None:
     db = Database(tmp_path / "x.sqlite3")
     initialize_schema(db)

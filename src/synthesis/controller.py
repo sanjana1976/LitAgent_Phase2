@@ -38,6 +38,7 @@ from synthesis.trace import (
     DecomposeParams,
     DetectContradictionsParams,
     ExtractClaimsParams,
+    FilterRelevanceParams,
     GapHuntParams,
     ReformulateParams,
     ResolveConflictParams,
@@ -70,6 +71,8 @@ class ControllerConfig:
     word_budget: int = 500
     gap_search_terms: int = 6
     min_relevance_score: float = 0.03
+    relevance_keep_threshold: int = 6
+    hunt_paper_limit: int = 5
     sources: tuple[str, ...] = ("arxiv",)
 
 
@@ -86,10 +89,29 @@ class ControllerHooks:
     generate: Callable[..., str] | None = None
     validate_cites: Callable[..., tuple] | None = None
     reformulate: Callable[[SynthesisState, str], str] | None = None
+    relevance_filter: Callable[..., tuple] | None = None
 
 
 def _last_step_id(state: SynthesisState) -> str | None:
     return state.trace[-1].step_id if state.trace else None
+
+
+def _searched_queries(state: SynthesisState) -> set[str]:
+    """Queries already issued, derived from the trace (never stored separately)."""
+    return {
+        s.params.query
+        for s in state.trace
+        if s.action == "search" and s.params.kind == "search"
+    }
+
+
+def _next_unsearched_query(state: SynthesisState) -> str | None:
+    """First sub-query (in decompose/reformulate order) not yet searched."""
+    searched = _searched_queries(state)
+    for query in state.sub_queries:
+        if query not in searched:
+            return query
+    return None
 
 
 def _paper_ids(papers: list[ScoredPaper]) -> set[str]:
@@ -133,7 +155,8 @@ def next_action(state: SynthesisState, config: ControllerConfig | None = None) -
 
     The policy is intentionally small and explicit:
     - no sub-queries -> decompose
-    - no papers or last action was a reformulation -> search
+    - any sub-query not yet searched -> search it (every decomposed angle and
+      every reformulation gets exactly one search, in order)
     - fewer than ``min_relevant_papers`` -> reformulate until cap, then stop
     - enough papers -> no-op synthesize placeholder (downstream controller work)
     """
@@ -149,13 +172,16 @@ def next_action(state: SynthesisState, config: ControllerConfig | None = None) -
             parent_step_id=parent,
         )
 
-    if not state.papers or (state.trace and state.trace[-1].action == "reformulate"):
-        query = state.sub_queries[-1]
+    pending_query = _next_unsearched_query(state)
+    if pending_query is not None:
         return DecisionStep.start(
             action="search",
-            params=SearchParams(query=query, sources=list(cfg.sources)),
-            trigger=f"working set has {len(state.papers)} parsed paper(s)",
-            rationale="search the current query and add any newly parsed papers to state",
+            params=SearchParams(query=pending_query, sources=list(cfg.sources)),
+            trigger=(
+                f"working set has {len(state.papers)} parsed paper(s); "
+                f"sub-query {pending_query!r} has not been searched yet"
+            ),
+            rationale="search every decomposed angle before judging coverage",
             parent_step_id=parent,
         )
 
@@ -258,6 +284,13 @@ class SynthesisController:
 
         return validate_citations
 
+    def _relevance_filter_fn(self) -> Callable[..., tuple]:
+        if self.hooks.relevance_filter is not None:
+            return self.hooks.relevance_filter
+        from synthesis.relevance import llm_relevance_filter
+
+        return llm_relevance_filter
+
     def run_retrieval_loop(self, question: str) -> SynthesisState:
         """
         Run through adaptive retrieval and return the traced state.
@@ -293,6 +326,7 @@ class SynthesisController:
 
         retrieval_reason = state.terminal_reason
         state.terminal_reason = None
+        self.run_relevance_gate_loop(state)
         self.run_claims_loop(state)
         self.run_detect_contradictions_loop(state)
         self.run_gap_detection_loop(state)
@@ -300,6 +334,73 @@ class SynthesisController:
         self.run_synthesize_loop(state)
 
         state.terminal_reason = retrieval_reason or "synthesized"
+        return state
+
+    def run_relevance_gate_loop(self, state: SynthesisState) -> SynthesisState:
+        """
+        Semantically gate the retrieved working set against the question.
+
+        One traced ``filter_relevance`` step asks the LLM to score every
+        paper's title + abstract for topical relevance and drops papers below
+        ``config.relevance_keep_threshold``. This is what actually prevents
+        off-topic papers from reaching claim extraction and the final review;
+        the TF-IDF ranker alone cannot reject papers that merely share generic
+        vocabulary with the question. Fail-soft: an LLM failure keeps the
+        working set unchanged (result ``noop``) rather than erasing evidence.
+        """
+        if not state.papers:
+            return state
+
+        relevance_filter = self._relevance_filter_fn()
+        step = state.log(
+            DecisionStep.start(
+                action="filter_relevance",
+                params=FilterRelevanceParams(
+                    paper_ids=[p.paper_id for p in state.papers],
+                    keep_threshold=self.config.relevance_keep_threshold,
+                ),
+                trigger=f"retrieval gathered {len(state.papers)} candidate paper(s)",
+                rationale="drop off-topic papers before claim extraction and synthesis",
+                parent_step_id=_last_step_id(state),
+            )
+        )
+        start = time.perf_counter()
+
+        try:
+            kept, scores, used_llm = relevance_filter(
+                state.question,
+                list(state.papers),
+                keep_threshold=self.config.relevance_keep_threshold,
+            )
+        except Exception as exc:  # noqa: BLE001 - the gate must not abort the run
+            step.complete(
+                result="failed",
+                result_note=f"{type(exc).__name__}: {exc}",
+                duration_ms=_elapsed_ms(start),
+            )
+            return state
+
+        if not used_llm:
+            step.complete(
+                result="noop",
+                result_note="relevance LLM unavailable; keeping all papers",
+                duration_ms=_elapsed_ms(start),
+            )
+            return state
+
+        dropped = [p.paper_id for p in state.papers if p.paper_id not in _paper_ids(kept)]
+        state.papers = list(kept)
+        step.complete(
+            result="ok",
+            result_note=(
+                f"kept {len(kept)} paper(s), dropped {len(dropped)} below "
+                f"score {self.config.relevance_keep_threshold}: {dropped}"
+                if dropped
+                else f"all {len(kept)} paper(s) judged relevant"
+            ),
+            llm_calls=1,
+            duration_ms=_elapsed_ms(start),
+        )
         return state
 
     def run_claims_loop(self, state: SynthesisState) -> SynthesisState:
@@ -440,10 +541,12 @@ class SynthesisController:
 
             try:
                 rq = self._single_query_rq(terms, claim.claim)
+                # Hunts are targeted verification searches: keep the candidate
+                # set (and therefore the PDF downloads) small.
                 raw = retrieve(
                     rq,
                     per_query_limit=self.config.per_query_limit,
-                    total_limit=self.config.total_paper_limit,
+                    total_limit=self.config.hunt_paper_limit,
                     sources=self.config.sources,
                 )
                 candidates = self._rank_candidates(fetch_parse(raw), state.question)
@@ -525,10 +628,12 @@ class SynthesisController:
 
             try:
                 rq = self._single_query_rq(terms, pair.claim_a)
+                # Same small-candidate policy as gap hunts: a conflict needs
+                # one good third paper, not a full retrieval sweep.
                 raw = retrieve(
                     rq,
                     per_query_limit=self.config.per_query_limit,
-                    total_limit=self.config.total_paper_limit,
+                    total_limit=self.config.hunt_paper_limit,
                     sources=self.config.sources,
                 )
                 candidates = self._rank_candidates(fetch_parse(raw), state.question)
@@ -789,7 +894,10 @@ class SynthesisController:
             total_limit=self.config.total_paper_limit,
             sources=tuple(params.sources) or self.config.sources,
         )
-        parsed = self._fetch_parse_fn()(raw)
+        # Skip papers already in the working set BEFORE the fetch/parse stage
+        # so overlapping sub-queries do not re-run the PDF pipeline.
+        raw_new = [p for p in raw if p.paper_id not in before]
+        parsed = self._fetch_parse_fn()(raw_new)
         new_papers = [p for p in parsed if p.paper_id not in before]
         state.papers.extend(new_papers)
 

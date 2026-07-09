@@ -20,6 +20,7 @@ Design notes:
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -30,13 +31,42 @@ logger = logging.getLogger(__name__)
 
 
 _SYSTEM_PROMPT = (
-    "You are a research librarian helping decompose a literature-review "
-    "question into focused sub-queries for scholarly search. Respond with a "
-    "single JSON object of the form {\"sub_queries\": [\"...\", \"...\"]}. "
-    "Each sub-query should target a different angle of the question, such as "
-    "core methods, benchmarks/datasets, criticisms or limitations, and recent "
-    "work. Keep each sub-query under 18 words, do not number them, and never "
-    "include explanations outside the JSON object."
+    "You are a research librarian converting a literature-review question "
+    "into search queries for scholarly databases (arXiv, Semantic Scholar). "
+    "Respond with a single JSON object of the form "
+    "{\"sub_queries\": [\"...\", \"...\"]}. Each sub-query must be a terse "
+    "KEYWORD query of 3-8 technical terms — the words that would actually "
+    "appear in relevant paper titles and abstracts — never a natural-language "
+    "question or sentence. Do not include question words (what, how, why, "
+    "which, compare) or filler words. Together the sub-queries should cover "
+    "different angles of the question: the core topic, major competing "
+    "methods, evaluation/benchmarks, and surveys. Example: for the question "
+    "'What are the competing approaches to long-context retrieval in LLMs?' "
+    "return {\"sub_queries\": [\"long-context retrieval language models\", "
+    "\"retrieval augmented generation long documents\", "
+    "\"context window extension transformers\", "
+    "\"long context benchmark evaluation LLM\"]}. "
+    "Do not number the queries and never include explanations outside the "
+    "JSON object."
+)
+
+# Words that carry no scholarly-search signal: question scaffolding plus the
+# generic stopwords that would otherwise dominate a keyword query.
+_QUERY_STOPWORDS = frozenset(
+    {
+        "the", "a", "an", "and", "or", "but", "of", "in", "on", "at", "to",
+        "for", "with", "by", "is", "are", "was", "were", "be", "been", "being",
+        "as", "from", "that", "this", "these", "those", "it", "its", "we",
+        "our", "their", "they", "them", "i", "you", "than", "then", "if",
+        "into", "such", "can", "could", "may", "might", "will", "would",
+        "should", "do", "does", "did", "not", "no", "so", "also", "about",
+        "between", "among", "via", "have", "has", "had", "what", "when",
+        "where", "who", "how", "why", "which", "there", "here", "please",
+        "compare", "comparing", "versus", "vs", "competing", "approaches",
+        "approach", "current", "state", "art", "main", "different", "various",
+        "recent", "literature", "review", "papers", "research", "question",
+        "give", "me", "write", "tell",
+    }
 )
 
 
@@ -52,15 +82,39 @@ def _default_llm_call(
     )
 
 
+def _keyword_core(question: str) -> str:
+    """
+    Reduce a natural-language question to its salient keyword terms.
+
+    Drops question scaffolding and stopwords while preserving term order, so
+    'What are the competing approaches to long-context retrieval in LLMs?'
+    becomes 'long-context retrieval llms'.
+    """
+    tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9\-]*", question.lower())
+    seen: set[str] = set()
+    kept: list[str] = []
+    for token in tokens:
+        if len(token) < 2 or token in _QUERY_STOPWORDS or token in seen:
+            continue
+        seen.add(token)
+        kept.append(token)
+    return " ".join(kept)
+
+
 def _fallback_sub_queries(question: str, n: int) -> list[str]:
-    """Deterministic templated decomposition used when the LLM is unusable."""
-    base = question.strip() or "research question"
+    """
+    Deterministic keyword decomposition used when the LLM is unusable.
+
+    Builds queries from the question's salient terms instead of appending
+    suffixes to the raw question, so search providers see keyword queries
+    rather than full sentences.
+    """
+    base = _keyword_core(question) or question.strip() or "research question"
     candidates = [
         base,
+        f"{base} survey",
+        f"{base} evaluation benchmarks",
         f"{base} methods",
-        f"{base} benchmarks",
-        f"{base} limitations",
-        f"{base} recent work",
     ]
     return _clean_and_clamp(candidates, n=n, min_count=1)
 

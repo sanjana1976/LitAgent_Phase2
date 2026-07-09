@@ -142,6 +142,33 @@ def test_search_arxiv_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
     assert papers[0].api_source == "arxiv"
 
 
+def test_search_arxiv_builds_keyword_and_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Natural-language questions become sanitized ``all:term AND ...`` queries."""
+    captured: list[str] = []
+    empty_feed = "<?xml version='1.0'?><feed xmlns='http://www.w3.org/2005/Atom'></feed>"
+
+    class FakeResp:
+        text = empty_feed
+
+    def _capture(url: str, params=None, headers=None, host_key=None) -> FakeResp:
+        captured.append(url)
+        return FakeResp()
+
+    monkeypatch.setattr("tools.search_tools.rate_limited_get", _capture)
+    tool_search_arxiv(
+        "What are the competing approaches to long-context retrieval in LLMs?"
+    )
+
+    from urllib.parse import parse_qs, urlparse
+
+    first_query = parse_qs(urlparse(captured[0]).query)["search_query"][0]
+    assert first_query == "all:long-context AND all:retrieval AND all:llms"
+    # The AND query returned nothing, so the tool broadened to OR once.
+    assert len(captured) == 2
+    second_query = parse_qs(urlparse(captured[1]).query)["search_query"][0]
+    assert second_query == "all:long-context OR all:retrieval OR all:llms"
+
+
 def test_search_arxiv_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(*a: object, **k: object) -> None:
         raise ConnectionError("offline")
@@ -152,11 +179,12 @@ def test_search_arxiv_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_tools_registry_covers_all_exports() -> None:
-    assert len(TOOL_SPECS) == 20
+    assert len(TOOL_SPECS) == 21
     names = {spec.name for spec in TOOL_SPECS}
     assert "tool_lookup_forward_citations" in names
     assert "tool_export_list_to_bibtex" in names
     assert "tool_synthesize_literature_review" in names
+    assert "tool_get_review_context" in names
     sigs = list_tool_signatures()
     assert "tool_search_arxiv" in sigs
     assert "->" in sigs["tool_deep_analyze_paper"]

@@ -14,6 +14,18 @@ from typing import Final
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Use the operating system's certificate store when available. Corporate
+# proxies and endpoint-protection tools often re-sign TLS traffic with a CA
+# that is in the OS store but not in certifi's bundle, which makes every
+# httpx/OpenAI call fail with CERTIFICATE_VERIFY_FAILED. This is the same
+# opt-in mechanism pip uses; when the package is absent nothing changes.
+try:  # pragma: no cover - environment-dependent
+    import truststore
+
+    truststore.inject_into_ssl()
+except ImportError:  # pragma: no cover
+    pass
+
 
 # -----------------------------------------------------------------------------
 # Constants (paper search API base URLs — override via settings if extended)

@@ -63,7 +63,10 @@ def build_tool_specs() -> tuple[ToolSpec, ...]:
         tool_search_semantic_scholar,
     )
     from tools.storage_tools import tool_export_list_to_bibtex, tool_save_summary
-    from tools.synthesis_tools import tool_synthesize_literature_review
+    from tools.synthesis_tools import (
+        tool_get_review_context,
+        tool_synthesize_literature_review,
+    )
 
     definitions: list[tuple[str, Callable[..., Any]]] = [
         ("tool_search_arxiv", tool_search_arxiv),
@@ -86,6 +89,7 @@ def build_tool_specs() -> tuple[ToolSpec, ...]:
         ("tool_save_summary", tool_save_summary),
         ("tool_export_list_to_bibtex", tool_export_list_to_bibtex),
         ("tool_synthesize_literature_review", tool_synthesize_literature_review),
+        ("tool_get_review_context", tool_get_review_context),
     ]
 
     specs: list[ToolSpec] = []

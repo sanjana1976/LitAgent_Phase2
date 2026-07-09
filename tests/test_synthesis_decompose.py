@@ -59,7 +59,8 @@ def test_decompose_falls_back_on_garbage_payload() -> None:
     )
 
     assert len(rq.sub_queries) >= 2
-    assert any(s.startswith("diffusion models for audio") for s in rq.sub_queries)
+    # The fallback strips stopwords ("for") and builds keyword queries.
+    assert any(s.startswith("diffusion models audio") for s in rq.sub_queries)
 
 
 def test_decompose_falls_back_when_fewer_than_two_sub_queries() -> None:

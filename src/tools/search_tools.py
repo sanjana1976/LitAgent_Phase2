@@ -45,9 +45,52 @@ def _arxiv_id_from_entry_id(uri: str) -> str:
     return m.group(1) if m else uri
 
 
+# arXiv's Lucene-style parser matches every raw token, so question scaffolding
+# ("what are the competing approaches to ...") drowns out the actual topic.
+_ARXIV_QUERY_STOPWORDS = frozenset(
+    {
+        "the", "a", "an", "and", "or", "but", "of", "in", "on", "at", "to",
+        "for", "with", "by", "is", "are", "was", "were", "be", "been", "as",
+        "from", "that", "this", "these", "those", "it", "its", "we", "our",
+        "their", "they", "than", "then", "if", "into", "such", "can", "could",
+        "may", "might", "will", "would", "should", "do", "does", "did", "not",
+        "no", "so", "also", "about", "between", "among", "via", "have", "has",
+        "had", "what", "when", "where", "who", "how", "why", "which", "there",
+        "here", "compare", "comparing", "versus", "vs", "competing",
+        "approaches", "approach", "recent", "current",
+    }
+)
+
+_ARXIV_MAX_QUERY_TERMS = 6
+
+
+def _arxiv_significant_terms(query: str) -> list[str]:
+    """Extract deduplicated, stopword-free terms from free text, in order."""
+    terms: list[str] = []
+    seen: set[str] = set()
+    for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9\-]*", query.lower()):
+        if len(token) < 2 or token in _ARXIV_QUERY_STOPWORDS or token in seen:
+            continue
+        seen.add(token)
+        terms.append(token)
+        if len(terms) >= _ARXIV_MAX_QUERY_TERMS:
+            break
+    return terms
+
+
+def _arxiv_term_expression(terms: list[str], operator: str) -> str:
+    """Join sanitized terms into a fielded boolean expression like ``all:a AND all:b``."""
+    return f" {operator} ".join(f"all:{t}" for t in terms)
+
+
 def tool_search_arxiv(query: str, filters: dict[str, Any] | None = None) -> list[Paper]:
     """
     Search arXiv's Atom API by keyword, optional author, category, and submitted date range.
+
+    Free-text queries are reduced to their significant terms and issued as a
+    precise ``all:t1 AND all:t2 ...`` boolean query; if that returns nothing,
+    the search is retried once with ``OR`` so that recall degrades gracefully
+    instead of returning an empty set.
 
     ``filters`` may include: ``author``, ``category``, ``date_from``, ``date_to``, ``max_results``.
 
@@ -56,7 +99,21 @@ def tool_search_arxiv(query: str, filters: dict[str, Any] | None = None) -> list
     """
     f = validate_search_filters(filters)
     settings = get_settings()
-    q_parts: list[str] = [f"all:{query}"]
+
+    terms = _arxiv_significant_terms(query)
+    primary_expr = _arxiv_term_expression(terms, "AND") if terms else f"all:{query}"
+
+    papers = _arxiv_request(primary_expr, f, settings)
+    if not papers and len(terms) > 1:
+        broadened = _arxiv_term_expression(terms, "OR")
+        logger.info("arXiv AND query empty; broadening to OR: %s", broadened[:200])
+        papers = _arxiv_request(broadened, f, settings)
+    return papers
+
+
+def _arxiv_request(term_expression: str, f: SearchFilters, settings: Any) -> list[Paper]:
+    """Issue one arXiv API call for ``term_expression`` plus the validated filters."""
+    q_parts: list[str] = [term_expression]
     if f.author:
         q_parts.append(f"au:{f.author}")
     if f.category:

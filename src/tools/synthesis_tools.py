@@ -11,7 +11,9 @@ import json
 import logging
 from typing import Any
 
+from db.queries import get_latest_synthesis_run_for_session
 from synthesis.controller import ControllerConfig, run_agentic_synthesis
+from synthesis.persistence import synthesis_result_from_json
 from synthesis.schemas import SynthesisResult
 from tools.context import get_default_database, get_tool_session_id
 
@@ -113,3 +115,49 @@ def tool_synthesize_literature_review(
         session_id=get_tool_session_id(),
     )
     return json.dumps(_result_to_compact_dict(result), ensure_ascii=False)
+
+
+def tool_get_review_context() -> str:
+    """
+    Recall the papers and topic from the most recent literature review in this session.
+
+    Use this when the user asks a follow-up about a previous review — "those
+    papers", "the second paper", "which of them evaluate on X" — and the
+    paper identifiers are not already visible in the conversation. Returns the
+    same JSON shape as ``tool_synthesize_literature_review`` (question,
+    review_text, papers with paper_id/citation_key/url, contradictions), or an
+    ``error`` field when no review has been generated yet.
+    """
+    try:
+        database = get_default_database()
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not resolve default database for review recall")
+        return json.dumps({"error": "database unavailable; no review context to recall"})
+
+    session_id = get_tool_session_id()
+    try:
+        row = get_latest_synthesis_run_for_session(database, session_id)
+        if row is None and session_id:
+            # Fall back to the newest run overall so a fresh session can still
+            # pick up the user's last review.
+            row = get_latest_synthesis_run_for_session(database, None)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to load latest synthesis run")
+        return json.dumps({"error": "could not load a previous review from the database"})
+
+    if row is None:
+        return json.dumps(
+            {"error": "no literature review has been generated yet in any session"}
+        )
+
+    try:
+        result = synthesis_result_from_json(str(row["result_json"]))
+    except Exception:  # noqa: BLE001
+        logger.exception("Persisted synthesis run %s is unreadable", row.get("id"))
+        return json.dumps({"error": "the stored review could not be parsed"})
+
+    payload = _result_to_compact_dict(result)
+    payload["run_id"] = row.get("id")
+    payload["created_at"] = row.get("created_at")
+    payload["from_session"] = row.get("session_id")
+    return json.dumps(payload, ensure_ascii=False)

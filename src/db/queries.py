@@ -397,6 +397,43 @@ def get_synthesis_run_result_json(db: Database, run_id: int) -> str | None:
         raise DatabaseError(f"Could not load synthesis run {run_id}: {exc}") from exc
 
 
+def get_latest_synthesis_run_for_session(
+    db: Database,
+    session_id: str | None,
+) -> dict[str, Any] | None:
+    """
+    Return the newest synthesis run for ``session_id`` (or overall when None).
+
+    Backs the assistant's review-context recall: after a literature review is
+    generated in chat, follow-up turns can reload the paper set and topic.
+    """
+    if session_id:
+        sql = """
+            SELECT id, session_id, question, created_at, result_json
+            FROM synthesis_runs
+            WHERE session_id = ?
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT 1;
+        """
+        params: tuple[Any, ...] = (session_id,)
+    else:
+        sql = """
+            SELECT id, session_id, question, created_at, result_json
+            FROM synthesis_runs
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT 1;
+        """
+        params = ()
+    try:
+        with db.connection() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return dict(row) if row is not None else None
+    except sqlite3.Error as exc:
+        raise DatabaseError(
+            f"Could not load latest synthesis run for session: {exc}"
+        ) from exc
+
+
 def get_latest_synthesis_result_json_for_question(
     db: Database,
     question: str,

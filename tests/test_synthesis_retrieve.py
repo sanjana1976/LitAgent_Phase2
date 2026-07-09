@@ -157,45 +157,29 @@ def test_retrieve_truncates_to_total_limit() -> None:
     assert len(papers) == 5
 
 
-def test_retrieve_sort_prefers_abstract_then_citations_then_recency() -> None:
+def test_retrieve_preserves_provider_relevance_order() -> None:
+    """The provider's own relevance ranking must survive the merge untouched."""
     rq = ResearchQuestion(question="query", sub_queries=["query"])
     fakes = _make_search(
         {
             "arxiv": [
                 _paper(
-                    "arxiv:no-abs",
-                    title="No Abstract But Many Citations",
-                    abstract=None,
-                    citation_count=999,
-                    publication_date=date(2024, 1, 1),
-                ),
-                _paper(
-                    "arxiv:older-cited",
-                    title="Older Highly Cited",
-                    abstract="abs",
-                    citation_count=200,
+                    "arxiv:most-relevant",
+                    title="Most Relevant Hit",
+                    citation_count=0,
                     publication_date=date(2018, 1, 1),
                 ),
                 _paper(
-                    "arxiv:newer-less-cited",
-                    title="Newer Less Cited",
-                    abstract="abs",
-                    citation_count=50,
+                    "arxiv:second",
+                    title="Second Hit",
+                    citation_count=999,
                     publication_date=date(2024, 6, 1),
                 ),
                 _paper(
-                    "arxiv:tiebreak-b",
-                    title="b alphabetical",
-                    abstract="abs",
-                    citation_count=10,
-                    publication_date=date(2020, 1, 1),
-                ),
-                _paper(
-                    "arxiv:tiebreak-a",
-                    title="a alphabetical",
-                    abstract="abs",
-                    citation_count=10,
-                    publication_date=date(2020, 1, 1),
+                    "arxiv:third",
+                    title="Third Hit",
+                    citation_count=500,
+                    publication_date=date(2024, 1, 1),
                 ),
             ],
         }
@@ -204,13 +188,27 @@ def test_retrieve_sort_prefers_abstract_then_citations_then_recency() -> None:
     papers = retrieve_papers(rq, sources=("arxiv",), search_callables=fakes)
     ordered_ids = [p.paper_id for p in papers]
 
-    assert ordered_ids[-1] == "arxiv:no-abs"
-    assert ordered_ids.index("arxiv:older-cited") < ordered_ids.index(
-        "arxiv:newer-less-cited"
+    # Citation counts and recency must NOT reorder the provider's ranking.
+    assert ordered_ids == ["arxiv:most-relevant", "arxiv:second", "arxiv:third"]
+
+
+def test_retrieve_interleaves_sub_queries_round_robin() -> None:
+    """Every sub-query contributes its top hits before any angle dominates the cap."""
+    rq = ResearchQuestion(question="query", sub_queries=["angle one", "angle two"])
+    per_query = {
+        "angle one": [_paper(f"arxiv:a{i}", title=f"A{i}") for i in range(4)],
+        "angle two": [_paper(f"arxiv:b{i}", title=f"B{i}") for i in range(4)],
+    }
+
+    def _fn(q: str, _filters: dict[str, Any] | None = None) -> list[Paper]:
+        return list(per_query[q])
+
+    papers = retrieve_papers(
+        rq, sources=("arxiv",), total_limit=4, search_callables={"arxiv": _fn}
     )
-    assert ordered_ids.index("arxiv:tiebreak-a") < ordered_ids.index(
-        "arxiv:tiebreak-b"
-    )
+    ordered_ids = [p.paper_id for p in papers]
+
+    assert ordered_ids == ["arxiv:a0", "arxiv:b0", "arxiv:a1", "arxiv:b1"]
 
 
 def test_retrieve_passes_per_query_limit_into_filters() -> None:
