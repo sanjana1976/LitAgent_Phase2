@@ -11,7 +11,12 @@ from __future__ import annotations
 
 import logging
 import sys
+import warnings
 from pathlib import Path
+
+# langgraph's serializer import emits a pending-deprecation notice aimed at
+# library authors, not end users; keep the terminal clean.
+warnings.filterwarnings("ignore", message=".*allowed_objects.*")
 
 import click
 
@@ -51,7 +56,7 @@ from cli.welcome import echo_chat_help, echo_chat_welcome  # noqa: E402
 from synthesis.eval_harness import load_cases, resolve_case_result, score_synthesis, write_results  # noqa: E402
 from synthesis.persistence import synthesis_result_from_json  # noqa: E402
 from synthesis.schemas import SynthesisResult  # noqa: E402
-from synthesis.controller import ControllerConfig, run_agentic_synthesis  # noqa: E402
+from synthesis.graph import SynthesisConfig, run_graph_synthesis  # noqa: E402
 
 REVIEWS_DIR_NAME = "research reviews"
 
@@ -320,7 +325,14 @@ def resume_cmd(
 
 
 @cli.command("synthesize")
-@click.argument("question", nargs=-1, required=True)
+@click.argument("question", nargs=-1, required=False)
+@click.option(
+    "--resume",
+    "resume_id",
+    type=str,
+    default=None,
+    help="Resume an interrupted run by its run id (the question may be omitted).",
+)
 @click.option("--word-budget", type=int, default=500, show_default=True)
 @click.option(
     "--top-n",
@@ -358,6 +370,7 @@ def resume_cmd(
 )
 def synthesize(
     question: tuple[str, ...],
+    resume_id: str | None,
     word_budget: int,
     top_n: int,
     sources: tuple[str, ...],
@@ -366,7 +379,7 @@ def synthesize(
     session_id: str | None,
     verbose: bool,
 ) -> None:
-    """Run the agentic LitSynth controller on one research question and print the review."""
+    """Run the LangGraph LitSynth workflow on one research question and print the review."""
     ctx = click.get_current_context()
     parent_level = ctx.parent.params.get("log_level") if ctx.parent else None
     if verbose and parent_level is None:
@@ -375,8 +388,8 @@ def synthesize(
         setup_logging(level="WARNING")
 
     q = " ".join(question).strip()
-    if not q:
-        raise click.UsageError("question must be a non-empty string.")
+    if not q and not resume_id:
+        raise click.UsageError("Provide a question, or --resume <run-id> to continue a run.")
 
     settings = get_settings()
     if not settings.openai_api_key:
@@ -388,22 +401,38 @@ def synthesize(
     initialize_schema(db)
 
     paper_limit = max(2, min(12, top_n))
-    cfg = ControllerConfig(
+    cfg = SynthesisConfig(
         word_budget=max(150, min(2000, word_budget)),
         min_relevant_papers=min(4, paper_limit),
         total_paper_limit=paper_limit,
-        sources=tuple(s.lower() for s in sources) if sources else ControllerConfig().sources,
+        sources=tuple(s.lower() for s in sources) if sources else SynthesisConfig().sources,
     )
 
     def _progress(label: str) -> None:
         click.echo(f"[synth] {label}", err=True)
 
-    result = run_agentic_synthesis(
-        q,
+    from uuid import uuid4
+
+    checkpoint_path = settings.database_path.parent / "checkpoints.sqlite3"
+    run_id = resume_id or uuid4().hex[:12]
+    if resume_id:
+        click.echo(f"[synth] resuming run {run_id} from its last checkpoint", err=True)
+    else:
+        click.echo(
+            f"[synth] run id: {run_id} "
+            f"(if interrupted, continue with: python main.py synthesize --resume {run_id})",
+            err=True,
+        )
+
+    result = run_graph_synthesis(
+        q or None,
         config=cfg,
         database=db,
         session_id=session_id,
         progress=_progress if verbose else None,
+        checkpoint_path=checkpoint_path,
+        thread_id=run_id,
+        resume=bool(resume_id),
     )
 
     click.echo(result.to_markdown())
@@ -417,7 +446,8 @@ def synthesize(
     if not no_write:
         target = _resolve_review_output_path(
             output,
-            question=q,
+            # On --resume the question comes back from the checkpoint.
+            question=result.question or q,
             project_root=settings.project_root,
         )
         try:
@@ -533,7 +563,7 @@ def eval_synthesis(
         reports.append(score_synthesis(result, cases[0]))
     else:
         paper_limit = max(2, min(12, top_n))
-        cfg = ControllerConfig(
+        cfg = SynthesisConfig(
             word_budget=max(150, min(2000, word_budget)),
             min_relevant_papers=min(4, paper_limit),
             total_paper_limit=paper_limit,
@@ -548,7 +578,7 @@ def eval_synthesis(
                         "OPENAI_API_KEY is required for --live eval. "
                         "Run synthesize first or set the key."
                     )
-                result = run_agentic_synthesis(
+                result = run_graph_synthesis(
                     case.question,
                     config=cfg,
                     database=db,

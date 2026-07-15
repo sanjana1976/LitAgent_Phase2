@@ -71,7 +71,7 @@ def test_tool_returns_compact_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     monkeypatch.setattr(
-        synthesis_tools, "run_agentic_synthesis", lambda q, **kw: fake_result
+        synthesis_tools, "run_graph_synthesis", lambda q, **kw: fake_result
     )
 
     raw = tool_synthesize_literature_review("retrieval", word_budget=300, top_n=4)

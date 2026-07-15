@@ -18,9 +18,10 @@ Two disciplines carried over from the locked layers below it:
 
 from __future__ import annotations
 
+import operator
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -69,6 +70,41 @@ TerminalReason = Literal[
 ]
 
 
+def _merge_by_id(id_attr: str):
+    """
+    Build a LangGraph reducer that upserts list items by a stable id field.
+
+    A new item whose id matches an existing one *replaces* it in place
+    (preserving list order); unseen ids append. This lets nodes update an
+    item — e.g. a gap hunt upgrading a claim's grounding tier — by returning
+    a modified copy instead of mutating shared state, which stays correct
+    under parallel fan-out.
+    """
+
+    def _reducer(existing: list, new: list) -> list:
+        index_by_id = {getattr(item, id_attr): i for i, item in enumerate(existing)}
+        merged = list(existing)
+        for item in new:
+            key = getattr(item, id_attr)
+            if key in index_by_id:
+                merged[index_by_id[key]] = item
+            else:
+                index_by_id[key] = len(merged)
+                merged.append(item)
+        return merged
+
+    return _reducer
+
+
+# papers is upsert-by-id like the others: the pool never loses a paper (nodes
+# only ever add or refresh entries — e.g. re-ranked copies carrying updated
+# relevance_score), while *selection* lives separately in ``active_paper_ids``.
+merge_papers = _merge_by_id("paper_id")
+merge_claims = _merge_by_id("claim_id")
+merge_contradictions = _merge_by_id("contradiction_id")
+merge_gaps = _merge_by_id("gap_id")
+
+
 class SynthesisState(BaseModel):
     """Mutable working memory for one synthesis run."""
 
@@ -83,10 +119,22 @@ class SynthesisState(BaseModel):
     session_id: str | None = None
 
     # --- accumulating evidence ---
-    papers: list[ScoredPaper] = Field(default_factory=list)
-    claims: list[ClaimRecord] = Field(default_factory=list)
-    contradictions: list[ContradictionPair] = Field(default_factory=list)
-    gaps: list[Gap] = Field(default_factory=list)
+    # The Annotated reducer metadata is read only by the LangGraph orchestration
+    # layer (synthesis.graph); pydantic and all direct callers ignore it.
+    papers: Annotated[list[ScoredPaper], merge_papers] = Field(default_factory=list)
+    active_paper_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Ordered paper_ids currently selected for downstream stages "
+            "(ranking/relevance-gate output). Empty means 'all papers' for "
+            "backward compatibility with controller-driven runs."
+        ),
+    )
+    claims: Annotated[list[ClaimRecord], merge_claims] = Field(default_factory=list)
+    contradictions: Annotated[list[ContradictionPair], merge_contradictions] = Field(
+        default_factory=list
+    )
+    gaps: Annotated[list[Gap], merge_gaps] = Field(default_factory=list)
 
     # --- generative output (empty until the synthesize step) ---
     review_text: str | None = None
@@ -97,7 +145,7 @@ class SynthesisState(BaseModel):
     hallucinated_citations: list[str] = Field(default_factory=list)
 
     # --- the legible record ---
-    trace: list[DecisionStep] = Field(default_factory=list)
+    trace: Annotated[list[DecisionStep], operator.add] = Field(default_factory=list)
 
     # --- termination ---
     terminal_reason: TerminalReason | None = None
@@ -156,6 +204,19 @@ class SynthesisState(BaseModel):
     def get_paper(self, paper_id: str) -> ScoredPaper | None:
         return next((p for p in self.papers if p.paper_id == paper_id), None)
 
+    def active_papers(self) -> list[ScoredPaper]:
+        """
+        The papers currently selected for downstream stages, in selection order.
+
+        Falls back to all papers when ``active_paper_ids`` is empty so that
+        controller-driven runs (which trim ``papers`` in place instead of
+        tracking a selection) behave exactly as before.
+        """
+        if not self.active_paper_ids:
+            return list(self.papers)
+        by_id = {p.paper_id: p for p in self.papers}
+        return [by_id[pid] for pid in self.active_paper_ids if pid in by_id]
+
     def citations_used(self) -> list[str]:
         """Resolved, deduplicated paper ids from valid citation checks (in order)."""
         used: list[str] = []
@@ -191,7 +252,7 @@ class SynthesisState(BaseModel):
             hallucinated_citations=list(self.hallucinated_citations),
             contradictions_found=len(self.contradictions),
             confidence_score=confidence,
-            papers=list(self.papers),
+            papers=self.active_papers(),
             claims=list(self.claims),
             contradictions=list(self.contradictions),
             citation_checks=list(self.citation_checks),

@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import html
 import sys
+import warnings
 from pathlib import Path
+
+# langgraph's serializer import emits a pending-deprecation notice aimed at
+# library authors, not end users; keep the app logs clean.
+warnings.filterwarnings("ignore", message=".*allowed_objects.*")
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 SRC = PROJECT_ROOT / "src"
@@ -23,8 +28,8 @@ from config.config import get_settings  # noqa: E402
 from db.database import Database  # noqa: E402
 from db.init_db import initialize_schema  # noqa: E402
 from db.queries import get_synthesis_run_result_json, list_recent_synthesis_runs  # noqa: E402
-from synthesis.controller import ControllerConfig, SynthesisController  # noqa: E402
-from synthesis.persistence import load_synthesis_state_from_json, persist_synthesis_state  # noqa: E402
+from synthesis.graph import SynthesisConfig, run_graph_synthesis_state  # noqa: E402
+from synthesis.persistence import load_synthesis_state_from_json  # noqa: E402
 from synthesis.state import SynthesisState  # noqa: E402
 from synthesis.trace_view import (  # noqa: E402
     claim_rows,
@@ -54,6 +59,7 @@ _ACTION_LABELS: dict[str, str] = {
     "search": "Search",
     "reformulate": "Reformulate",
     "fetch_pdf": "Fetch PDF",
+    "filter_relevance": "Filter Relevance",
     "extract_claims": "Extract Claims",
     "detect_contradictions": "Detect Contradictions",
     "hunt_support": "Hunt Support",
@@ -237,16 +243,18 @@ def _run_agentic_synthesis(
     database: Database | None = None,
     session_id: str | None = None,
 ) -> SynthesisState:
-    config = ControllerConfig(
+    config = SynthesisConfig(
         min_relevant_papers=min_relevant_papers,
         max_reformulations=max_reformulations,
         word_budget=word_budget,
         sources=sources,
     )
-    state = SynthesisController(config=config).run(question)
-    if database is not None:
-        persist_synthesis_state(database, session_id, state)
-    return state
+    return run_graph_synthesis_state(
+        question,
+        config=config,
+        database=database,
+        session_id=session_id,
+    )
 
 
 def _render_hero() -> None:

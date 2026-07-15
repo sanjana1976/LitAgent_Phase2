@@ -12,7 +12,7 @@ import logging
 from typing import Any
 
 from db.queries import get_latest_synthesis_run_for_session
-from synthesis.controller import ControllerConfig, run_agentic_synthesis
+from synthesis.graph import SynthesisConfig, run_graph_synthesis
 from synthesis.persistence import synthesis_result_from_json
 from synthesis.schemas import SynthesisResult
 from tools.context import get_default_database, get_tool_session_id
@@ -95,11 +95,11 @@ def tool_synthesize_literature_review(
         )
 
     paper_limit = max(2, min(12, int(top_n)))
-    cfg = ControllerConfig(
+    cfg = SynthesisConfig(
         word_budget=max(150, min(2000, int(word_budget))),
         min_relevant_papers=min(4, paper_limit),
         total_paper_limit=paper_limit,
-        sources=tuple(sources) if sources else ControllerConfig().sources,
+        sources=tuple(sources) if sources else SynthesisConfig().sources,
     )
 
     try:
@@ -108,7 +108,7 @@ def tool_synthesize_literature_review(
         logger.exception("Could not resolve default database; running without persistence")
         database = None
 
-    result = run_agentic_synthesis(
+    result = run_graph_synthesis(
         q,
         config=cfg,
         database=database,

@@ -34,7 +34,7 @@ def test_synthesis_tool_passes_session_id_to_controller() -> None:
             confidence_score=1.0,
         )
 
-    with patch("tools.synthesis_tools.run_agentic_synthesis", side_effect=_fake_run):
+    with patch("tools.synthesis_tools.run_graph_synthesis", side_effect=_fake_run):
         with patch("tools.synthesis_tools.get_default_database", side_effect=RuntimeError("no db")):
             payload = json.loads(tool_synthesize_literature_review("What is RAG?"))
 

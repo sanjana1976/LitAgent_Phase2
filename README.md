@@ -99,11 +99,13 @@ Deploy notes:
 - Use the same synthesis tool inside chat: python main.py chat, then ask for a literature review on competing approaches to long-context retrieval in LLMs.
 - Follow up in chat: Which of those papers actually evaluate on needle-in-a-haystack benchmarks?
 
-## Two Synthesis Entry Points
-- Agentic controller: synthesis.controller.SynthesisController is the main A4 path. It reads explicit SynthesisState, decides the next action, logs each DecisionStep, and backs the Streamlit UI, CLI synthesize command, and chat tool.
-- Linear pipeline: synthesis.pipeline.run_synthesis is the original deterministic 10-stage function. It is kept as a compatibility and reference path, but it is no longer the main demo path.
+## Synthesis Orchestration (LangGraph)
+- synthesis.graph builds a LangGraph StateGraph over SynthesisState: decompose -> parallel search fan-out -> rank join -> coverage router -> (reformulate cycle) -> relevance gate -> parallel per-paper claim extraction -> contradictions -> parallel gap hunts -> parallel conflict resolution -> consolidate -> synthesize. Fan-outs use the Send API with bounded max_concurrency (default 4) so parallel LLM/API branches respect provider rate limits.
+- State fields carry reducers (papers/claims/contradictions/gaps upsert by id, trace appends); which papers feed downstream stages is the separate active_paper_ids selection, so filtering never destroys evidence.
+- Every node emits completed DecisionStep records, so the decision-trace UI and eval harness work unchanged on graph runs. Stage dependencies are injected through the LangGraph config channel for network-free tests.
+- The graph backs all three entry points: the CLI synthesize command, the chat tool, and the Streamlit UI. The earlier hand-rolled SynthesisController and the original linear pipeline were removed once the graph reached behavior parity.
 
-See Design.md for the full architecture and the reason behind the agentic refactor.
+See Design.md for the full architecture and the migration rationale.
 
 ## CLI
 - python main.py chat: REPL with quiet logs.
@@ -114,7 +116,8 @@ See Design.md for the full architecture and the reason behind the agentic refact
 - python main.py resume: pick a recent session.
 - python main.py status: show DB path and recent sessions.
 - python main.py init-db: create the schema.
-- python main.py synthesize "...": run the agentic LitSynth controller, print a markdown review, and auto-save it to research reviews/.
+- python main.py synthesize "...": run the agentic LitSynth workflow, print a markdown review, and auto-save it to research reviews/. Every run prints a run id and checkpoints each step to data/checkpoints.sqlite3.
+- python main.py synthesize --resume RUN_ID: continue an interrupted run (crash, rate limit, Ctrl-C) from its last checkpoint without re-running completed stages.
 - python main.py synthesize "..." --verbose: stream coarse controller progress while the trace records each internal decision.
 - python main.py synthesize "..." --output review.md: override the output filename. Relative paths are anchored under research reviews/.
 - python main.py synthesize "..." --no-write: print to stdout only.
@@ -143,13 +146,13 @@ Optional guardrail and API overrides are documented in .env.example and Design.m
 - config/: settings, guardrail tool lists, and API bases.
 - src/agent/: AgentManager, ConversationManager, and transcript helpers.
 - src/tools/: tools plus registry, including tool_synthesize_literature_review.
-- src/synthesis/: LitSynth pipeline plus the agentic controller, state, trace, trace view, and stage modules.
+- src/synthesis/: LangGraph orchestration (graph.py), state, trace, trace view, and the stage modules.
 - streamlit_app.py: two-panel review and decision-trace demo.
 - src/guardrails/: permissions, validators, and output guardrails.
 - src/cli/: welcome banner and help.
 - src/db/: SQLite schema and queries. Version 4 adds synthesis_runs.
 - src/models/: persistence models.
-- tests/: pytest suite with mocked LLM/API calls. Current suite is 271 tests.
+- tests/: pytest suite with mocked LLM/API calls. Current suite is 233 tests.
 - research reviews/: auto-generated markdown reviews from synthesize.
 - eval/: labeled cases.json and generated results.json for LitSynth eval.
 - Design.md: source of truth for design decisions.
@@ -162,7 +165,7 @@ Run the test suite:
 
 python -m pytest
 
-There are 271 mocked tests. They cover the A3 code, every LitSynth stage (including the relevance gate and keyword query building), the agentic controller and its loops, the decision-trace/state models, review-context recall, eval CLI, and UI formatting helpers. CI does not call live APIs. conftest.py sets a dummy OPENAI_API_KEY.
+There are 233 mocked tests. They cover the A3 code, every LitSynth stage (including the relevance gate and keyword query building), the LangGraph orchestration (router, reformulation cycle, reducer semantics, traced nodes), the decision-trace/state models, review-context recall, eval CLI, and UI formatting helpers. CI does not call live APIs. conftest.py sets a dummy OPENAI_API_KEY.
 
 In Docker: `docker compose --profile test run --rm test` (tests are baked into the image; no extra volume mount).
 

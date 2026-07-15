@@ -1,4 +1,4 @@
-# DESIGN
+﻿# DESIGN
 
 This document focuses on  design decisions for the Research Paper Analyzer Agent n why they were made.
 
@@ -362,3 +362,26 @@ Two different papers by the same first author in the same year produce the same 
 - The assistant wrote the `trace`, `state`, `controller`, and `trace_view` modules, each feature loop, the Streamlit UI, and the mocked tests.
 
 
+
+## LangGraph migration (2026-07)
+
+The hand-rolled controller proved out the architecture; the migration swaps its orchestration for LangGraph while keeping every stage module, the typed trace, and the eval harness.
+
+### What changed
+
+- **`synthesis/graph.py` replaces `controller.py` and `pipeline.py`.** The graph is a `StateGraph` over `SynthesisState`: decompose -> search -> coverage router -> (reformulate cycle) -> relevance gate -> claims -> contradictions -> gap hunts -> conflict resolution -> synthesize. The old `next_action` policy became the graph''s conditional-edge router; same decisions, native idiom.
+- **State fields carry LangGraph reducers.** `papers`, `claims`, `contradictions`, and `gaps` upsert by stable id; `trace` appends. Nodes return modified *copies* (e.g. a gap hunt upgrading a claim''s grounding tier), never mutate shared objects — the property that makes parallel fan-out (phase 3) safe.
+- **Evidence vs. selection split.** `papers` is append-only provenance; the new `active_paper_ids` field carries which papers feed downstream stages (ranking and relevance-gate output). Filtering can never destroy evidence.
+- **Steps are born completed.** The two-phase pending->complete arc existed because one loop interleaved deciding and executing. In the graph, edges decide and nodes execute, so each node emits finished `DecisionStep`s. The trace schema, UI, and eval harness are unchanged.
+- **Dependency injection moved to the LangGraph config channel** (`config["configurable"]["litsynth_deps"]`), replacing `ControllerHooks` with the same test seam.
+- **Terminal reasons are derived, not stored mid-run**: the synthesize node computes `reformulation_cap` from the trace when the budget is exhausted and coverage is still thin.
+
+### Trade-offs
+
+- The relevance gate sits inside the retrieval cycle: a gutted post-gate working set re-enters reformulation while budget remains, so a thin review of one tangential paper is never the silent outcome — irrelevant papers cost a search but never a PDF-fetch-plus-claim-extraction.
+- A no-op reformulation still consumes budget (one traced `noop` step per attempt), bounding the cycle without a separate loop counter.
+- `run_graph_synthesis_state` returns the full traced state for the UI; `run_graph_synthesis` wraps it for callers that only need the result artifact.
+
+### Roadmap
+
+Phase 3 (done 2026-07-13): parallel fan-out over sub-queries/papers/hunts/conflicts via the Send API — dispatcher conditionals return Send batches, join nodes (rank_pool, consolidate) are the sole writers of active_paper_ids, and max_concurrency bounds the branches. Live timing: the flagship question dropped from ~2.5-3 minutes to 70 seconds wall clock. Phase 4 (done 2026-07-14): SqliteSaver checkpointing (data/checkpoints.sqlite3, one thread per run id) and `synthesize --resume <run-id>`. Every superstep persists; an interrupted run (crash, quota, Ctrl-C) resumes without re-executing completed stages — verified live by killing a run mid-flight and resuming it to a 0.94-confidence review. Progress streaming skips checkpointed history on resume. Phase 5: chat agent on `create_react_agent` with interrupt-based confirmations. Phase 6: writer-critic revision loop as a subgraph, with a checkable-objection eval metric.

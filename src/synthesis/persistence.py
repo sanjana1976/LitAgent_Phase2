@@ -29,6 +29,7 @@ def build_persist_payload(state: SynthesisState) -> dict[str, Any]:
     payload["terminal_reason"] = state.terminal_reason
     payload["session_id"] = state.session_id
     payload["sub_queries"] = list(state.sub_queries)
+    payload["active_paper_ids"] = list(state.active_paper_ids)
     return payload
 
 
@@ -57,7 +58,14 @@ def persist_synthesis_state(
 def synthesis_result_from_json(raw: str) -> SynthesisResult:
     """Parse persisted JSON into a ``SynthesisResult`` (ignores trace extras)."""
     data = json.loads(raw)
-    trace_keys = {"trace", "gaps", "terminal_reason", "session_id", "sub_queries"}
+    trace_keys = {
+        "trace",
+        "gaps",
+        "terminal_reason",
+        "session_id",
+        "sub_queries",
+        "active_paper_ids",
+    }
     result_data = {k: v for k, v in data.items() if k not in trace_keys}
     return SynthesisResult.model_validate(result_data)
 
@@ -78,7 +86,11 @@ def load_synthesis_state_from_json(raw: str) -> SynthesisState | None:
     terminal_reason: TerminalReason | None = terminal if terminal else None
 
     result = SynthesisResult.model_validate(
-        {k: v for k, v in data.items() if k not in {"trace", "gaps", "terminal_reason", "sub_queries"}}
+        {
+            k: v
+            for k, v in data.items()
+            if k not in {"trace", "gaps", "terminal_reason", "sub_queries", "active_paper_ids"}
+        }
     )
 
     return SynthesisState(
@@ -86,6 +98,7 @@ def load_synthesis_state_from_json(raw: str) -> SynthesisState | None:
         sub_queries=list(data.get("sub_queries") or []),
         session_id=data.get("session_id"),
         papers=list(result.papers),
+        active_paper_ids=list(data.get("active_paper_ids") or []),
         claims=list(result.claims),
         contradictions=list(result.contradictions),
         gaps=gaps,
