@@ -202,7 +202,6 @@ Optional guardrail and API overrides are documented in .env.example and Design.m
 - eval/: labeled cases.json and generated results.json for LitSynth eval.
 - Design.md: source of truth for design decisions.
 - proposal/: original and marked-up A4 proposal.
-- review/: reviewer quick start and session log.
 - transcripts/: optional manual JSON logs.
 
 ## Testing
@@ -243,16 +242,9 @@ On a machine that already has saved runs, python main.py eval-synthesis scores t
 - Interrupt confirmation: python main.py chat, then ask it to create a reading list — the graph pauses for your yes/no before the write executes.
 - Eval from a fresh clone: python main.py eval-synthesis --live, or open committed eval/results.json.
 
-## Course Review
+## Project History
 
-- Design.md: architecture, guardrails, tools, and oracles.
+- Design.md: architecture, guardrails, tools, and design rationale (including the LangGraph migration log).
 - proposal/proposal.md: original A4 proposal.
 - proposal/proposal-markedup.md: final marked-up proposal.
-- REVIEW-PLAN.md: review-day feedback and changes made in response.
-- PEER_REVIEW.md: filled peer-review template.
-- review/README.md: review session quick start.
-- review/session-log.md: demo script and traces.
 
-## License
-
-Use and modify for your course assignment as permitted by your instructor.
