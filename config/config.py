@@ -108,6 +108,7 @@ class AppSettings(BaseSettings):
             "tool_list_all_lists",
             "tool_get_list_contents",
             "tool_synthesize_literature_review",
+            "tool_get_review_context",
         ),
         alias="GUARDRAILS_AUTONOMOUS_TOOLS",
     )

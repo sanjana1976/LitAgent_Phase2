@@ -65,6 +65,7 @@ _ACTION_LABELS: dict[str, str] = {
     "hunt_support": "Hunt Support",
     "resolve_conflict": "Resolve Conflict",
     "synthesize": "Synthesize",
+    "critique": "Critique",
 }
 
 _CSS = """

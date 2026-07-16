@@ -1,25 +1,53 @@
-"""OpenAI-backed tool-using agent manager for research workflows."""
+"""
+LangGraph-backed tool-using agent manager for research workflows.
+
+The chat agent is a ``langchain.agents.create_agent`` (LangGraph prebuilt)
+graph over the registered research tools. Permission policy is enforced
+*inside* each tool via a guard wrapper:
+
+- blocked tools return their policy reason instead of executing;
+- confirmation-tier tools pause the whole graph with ``interrupt()`` — the
+  caller (CLI) answers via its confirm callback and the graph resumes with
+  ``Command(resume=...)``, re-entering the tool with the user's decision;
+- every decision is written to the permission audit table.
+
+``AgentManager.respond`` keeps its original synchronous contract so the
+conversation layer, CLI, and transcripts are unaffected by the orchestration
+swap.
+"""
 
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
+from uuid import uuid4
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain.agents import create_agent
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
+from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.errors import GraphRecursionError
+from langgraph.types import Command, interrupt
 
 from agent.errors import AgentError
 from db.database import Database, DatabaseError
 from db.queries import insert_permission_audit
 from guardrails.output import TurnToolTracker, apply_output_guardrails
 from guardrails.permissions import GuardrailError, PermissionManager
-from tools.context import set_tool_session_id
+from tools.context import get_tool_session_id, set_tool_session_id
 from tools.registry import get_registered_tools
 from tools.tools_registry import list_tool_signatures
 
 logger = logging.getLogger(__name__)
+
+# Tool outputs with this prefix mark permission refusals (blocked or denied);
+# they are shown to the model as tool results but never counted as executions.
+_PERMISSION_PREFIX = "[permission]"
+_TOOL_ERROR_PREFIX = "Tool error:"
 
 DEFAULT_SYSTEM_PROMPT = """
 You are Research Paper Analyzer, an expert assistant for graduate-level literature discovery, organization, and deep technical analysis. Your job is to help users build reading lists, inspect papers beyond the abstract, compare approaches rigorously, and generate high-quality citation outputs.
@@ -113,7 +141,7 @@ class ResearchPaperAgent:
 
 class AgentManager:
     """
-    OpenAI + tool orchestration loop with guardrails and confirmations.
+    LangGraph agent + permission-guarded tools with interrupt confirmations.
     """
 
     def __init__(
@@ -126,32 +154,147 @@ class AgentManager:
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         temperature: float = 0.1,
         max_tokens: int = 4_096,
+        model_instance: BaseChatModel | None = None,
+        tool_overrides: dict[str, Callable[..., Any]] | None = None,
     ) -> None:
-        if not api_key:
+        """
+        Args:
+            model_instance: Optional pre-built chat model (tests inject a
+                scripted model here). When omitted, a ``ChatOpenAI`` is built
+                from ``api_key``/``model``.
+            tool_overrides: Optional map of tool name -> replacement callable.
+                The original tool's schema and description are kept; only the
+                executed function is swapped (tests stub network tools here).
+        """
+        if not api_key and model_instance is None:
             raise AgentError("OPENAI_API_KEY is required for agent chat.")
 
         self._database = database
         self._permission_manager = permission_manager
         self._system_prompt = system_prompt
         self._max_steps = 8
-        self._tool_map: dict[str, BaseTool] = {}
+
+        overrides = tool_overrides or {}
+        guarded_tools: list[StructuredTool] = []
         for fn in get_registered_tools():
-            tool = StructuredTool.from_function(fn)
-            self._tool_map[tool.name] = tool
+            base = StructuredTool.from_function(fn)
+            inner = overrides.get(base.name, fn)
+            guarded_tools.append(self._build_guarded_tool(base, inner))
 
         tool_signatures = list_tool_signatures()
         signatures_blob = "\n".join(f"- {name}: {sig}" for name, sig in tool_signatures.items())
-        self._llm = ChatOpenAI(
-            model=model,
-            api_key=api_key,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        ).bind_tools(list(self._tool_map.values()))
+        chat_model: BaseChatModel = (
+            model_instance
+            if model_instance is not None
+            else ChatOpenAI(
+                model=model,
+                api_key=api_key,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        )
+        # The in-memory checkpointer exists to support interrupt()/resume for
+        # tool confirmations; each respond() call runs on a fresh thread id.
+        self._agent = create_agent(
+            chat_model,
+            guarded_tools,
+            checkpointer=InMemorySaver(),
+        )
         self._system_message = SystemMessage(
             content=(
                 f"{self._system_prompt}\n\nAvailable tools and signatures:\n{signatures_blob}\n"
                 "When a user asks for destructive actions, refuse and explain policy."
             )
+        )
+
+    def _build_guarded_tool(
+        self, base: StructuredTool, inner: Callable[..., Any]
+    ) -> StructuredTool:
+        """
+        Wrap one registered tool in the permission guard.
+
+        The wrapper keeps the original schema (so the model sees the same
+        tool signature) and enforces policy at execution time. Confirmation
+        pauses the graph via ``interrupt()``; on resume the wrapper re-runs
+        from the top and ``interrupt()`` returns the user's decision.
+        """
+        name = base.name
+        schema = base.args_schema
+        if isinstance(schema, dict):  # JSON-schema shape (langchain >= 1.x)
+            schema_fields = schema.get("properties", {}) or {}
+        else:  # pydantic-model shape
+            schema_fields = getattr(schema, "model_fields", {}) or {}
+        try:
+            inner_params = inspect.signature(inner).parameters
+        except (TypeError, ValueError):
+            inner_params = {}
+        accepts_confirm_flag = (
+            "user_confirmed" in schema_fields or "user_confirmed" in inner_params
+        )
+
+        def guarded(**kwargs: Any) -> str:
+            pm = self._permission_manager
+            if pm is not None:
+                decision = pm.check_permission(name, "execute")
+                if not decision.allowed:
+                    self._log_permission(
+                        session_id=get_tool_session_id(),
+                        tool_name=name,
+                        action="execute",
+                        allowed=False,
+                        needs_confirmation=False,
+                        reason=decision.reason,
+                    )
+                    return f"{_PERMISSION_PREFIX} {decision.reason or 'Blocked by policy.'}"
+
+                if decision.needs_confirmation:
+                    # Pauses the whole graph; respond() collects the user's
+                    # answer and resumes. NOTE: nothing below this line runs
+                    # on the first pass — logging must stay after the
+                    # interrupt so it fires exactly once.
+                    approved = bool(interrupt({"tool": name, "args": kwargs}))
+                    self._log_permission(
+                        session_id=get_tool_session_id(),
+                        tool_name=name,
+                        action="confirm",
+                        allowed=approved,
+                        needs_confirmation=True,
+                        user_decision="yes" if approved else "no",
+                        reason="user confirmation for write/mutation",
+                    )
+                    if not approved:
+                        return f"{_PERMISSION_PREFIX} User denied execution of {name}."
+                    if accepts_confirm_flag:
+                        kwargs = {**kwargs, "user_confirmed": True}
+                else:
+                    self._log_permission(
+                        session_id=get_tool_session_id(),
+                        tool_name=name,
+                        action="execute",
+                        allowed=True,
+                        needs_confirmation=False,
+                        reason=decision.reason,
+                    )
+
+                if name == "tool_export_list_to_bibtex" and "filename" in kwargs:
+                    try:
+                        pm.validate_filesystem_target(str(kwargs["filename"]))
+                    except GuardrailError as exc:
+                        return f"{_PERMISSION_PREFIX} {exc}"
+
+            try:
+                output = inner(**kwargs)
+            except GuardrailError as exc:
+                return str(exc)
+            except Exception as exc:  # noqa: BLE001 - errors go back to the model
+                return f"{_TOOL_ERROR_PREFIX} {exc}"
+            return output if isinstance(output, str) else str(output)
+
+        return StructuredTool(
+            name=name,
+            description=base.description,
+            args_schema=base.args_schema,
+            func=guarded,
         )
 
     def _log_permission(
@@ -190,7 +333,13 @@ class AgentManager:
         confirm_callback: Callable[[str], bool] | None = None,
     ) -> AgentTurnResult:
         """
-        Run iterative tool-use loop until a final assistant answer is produced.
+        Run the agent graph until a final assistant answer is produced.
+
+        Confirmation-tier tool calls surface as graph interrupts: the run
+        pauses, ``confirm_callback`` is asked (no callback means denial), and
+        the graph resumes with the decision. Step budget is enforced by the
+        graph itself — when exhausted it returns a final message instead of
+        looping forever.
         """
         set_tool_session_id(session_id)
         messages: list[BaseMessage] = [self._system_message]
@@ -198,112 +347,64 @@ class AgentManager:
             messages.append(SystemMessage(content=f"Session context: {context_note}"))
         messages.extend(history)
 
-        executed = 0
+        run_config: dict[str, Any] = {
+            "configurable": {"thread_id": uuid4().hex},
+            "recursion_limit": 2 * self._max_steps + 1,
+        }
+
+        try:
+            result = self._agent.invoke({"messages": messages}, run_config)
+            while result.get("__interrupt__"):
+                resume: dict[str, Any] = {}
+                for intr in result["__interrupt__"]:
+                    payload = intr.value if isinstance(intr.value, dict) else {}
+                    tool_name = str(payload.get("tool", "unknown tool"))
+                    tool_args = payload.get("args", {})
+                    approved = False
+                    if confirm_callback is not None:
+                        approved = bool(
+                            confirm_callback(
+                                f"Confirm execution of {tool_name} with args={tool_args}? (yes/no)"
+                            )
+                        )
+                    resume[intr.id] = approved
+                result = self._agent.invoke(Command(resume=resume), run_config)
+        except GraphRecursionError as exc:
+            raise AgentError(
+                "Agent exceeded max tool-iteration steps without final response."
+            ) from exc
+        except AgentError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Agent graph invocation failed")
+            raise AgentError("Language model invocation failed.") from exc
+
+        out_messages: list[BaseMessage] = list(result.get("messages", []))
         tool_tracker = TurnToolTracker()
-        for _step in range(self._max_steps):
-            try:
-                model_msg: AIMessage = self._llm.invoke(messages)  # type: ignore[assignment]
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("OpenAI invocation failed")
-                raise AgentError("Language model invocation failed.") from exc
+        executed = 0
+        for message in out_messages:
+            if not isinstance(message, ToolMessage):
+                continue
+            text = message.content if isinstance(message.content, str) else str(message.content)
+            tool_tracker.record(message.name or "", text)
+            if (
+                getattr(message, "status", None) != "error"
+                and not text.startswith(_PERMISSION_PREFIX)
+                and not text.startswith(_TOOL_ERROR_PREFIX)
+            ):
+                executed += 1
 
-            if not isinstance(model_msg, AIMessage):
-                raise AgentError("Unexpected model response shape.")
-            messages.append(model_msg)
+        final = out_messages[-1] if out_messages else None
+        if not isinstance(final, AIMessage):
+            raise AgentError("Unexpected model response shape.")
 
-            tool_calls = model_msg.tool_calls or []
-            if not tool_calls:
-                content = model_msg.content
-                if isinstance(content, str):
-                    sanitized = apply_output_guardrails(content, tool_tracker)
-                    if sanitized != content:
-                        model_msg = AIMessage(
-                            content=sanitized,
-                            additional_kwargs=getattr(model_msg, "additional_kwargs", {}),
-                            response_metadata=getattr(model_msg, "response_metadata", {}),
-                        )
-                return AgentTurnResult(message=model_msg, tool_calls_executed=executed)
-
-            for call in tool_calls:
-                tool_name = call.get("name", "")
-                args = call.get("args", {}) or {}
-                call_id = call.get("id", tool_name)
-                if tool_name not in self._tool_map:
-                    messages.append(
-                        ToolMessage(
-                            tool_call_id=call_id,
-                            content=f"Unknown tool: {tool_name}",
-                        )
-                    )
-                    continue
-
-                if self._permission_manager is not None:
-                    decision = self._permission_manager.check_permission(tool_name, "execute")
-                    self._log_permission(
-                        session_id=session_id,
-                        tool_name=tool_name,
-                        action="execute",
-                        allowed=decision.allowed,
-                        needs_confirmation=decision.needs_confirmation,
-                        reason=decision.reason,
-                    )
-                    if not decision.allowed:
-                        messages.append(
-                            ToolMessage(tool_call_id=call_id, content=decision.reason or "Blocked")
-                        )
-                        continue
-                    if decision.needs_confirmation:
-                        if confirm_callback is None:
-                            messages.append(
-                                ToolMessage(
-                                    tool_call_id=call_id,
-                                    content=f"User confirmation required for {tool_name}; not available.",
-                                )
-                            )
-                            continue
-                        approved = confirm_callback(
-                            f"Confirm execution of {tool_name} with args={args}? (yes/no)"
-                        )
-                        self._log_permission(
-                            session_id=session_id,
-                            tool_name=tool_name,
-                            action="confirm",
-                            allowed=approved,
-                            needs_confirmation=True,
-                            user_decision="yes" if approved else "no",
-                            reason="user confirmation for write/mutation",
-                        )
-                        if not approved:
-                            messages.append(
-                                ToolMessage(
-                                    tool_call_id=call_id,
-                                    content=f"User denied execution of {tool_name}.",
-                                )
-                            )
-                            continue
-                        args = {**args, "user_confirmed": True}
-
-                try:
-                    if (
-                        self._permission_manager is not None
-                        and tool_name == "tool_export_list_to_bibtex"
-                        and isinstance(args, dict)
-                        and "filename" in args
-                    ):
-                        self._permission_manager.validate_filesystem_target(str(args["filename"]))
-                    output = self._tool_map[tool_name].invoke(args)
-                    executed += 1
-                except GuardrailError as exc:
-                    output = str(exc)
-                except Exception as exc:  # noqa: BLE001
-                    output = f"Tool error: {exc}"
-                output_text = output if isinstance(output, str) else str(output)
-                tool_tracker.record(tool_name, output_text)
-                messages.append(
-                    ToolMessage(
-                        tool_call_id=call_id,
-                        content=output_text,
-                    )
+        content = final.content
+        if isinstance(content, str):
+            sanitized = apply_output_guardrails(content, tool_tracker)
+            if sanitized != content:
+                final = AIMessage(
+                    content=sanitized,
+                    additional_kwargs=getattr(final, "additional_kwargs", {}),
+                    response_metadata=getattr(final, "response_metadata", {}),
                 )
-
-        raise AgentError("Agent exceeded max tool-iteration steps without final response.")
+        return AgentTurnResult(message=final, tool_calls_executed=executed)

@@ -138,6 +138,13 @@ class SynthesisState(BaseModel):
 
     # --- generative output (empty until the synthesize step) ---
     review_text: str | None = None
+    objections: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Validated checkable objections from the most recent critique pass "
+            "(replace semantics; emptied when the critic accepts the draft)."
+        ),
+    )
     citation_checks: list[CitationCheck] = Field(
         default_factory=list,
         description="Raw per-citation verdicts; citation_validity() is derived from these.",

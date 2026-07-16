@@ -43,6 +43,7 @@ ActionType = Literal[
     "hunt_support",
     "resolve_conflict",
     "synthesize",
+    "critique",
 ]
 
 # 'pending' is the phase-1 state before the action has been executed. The other
@@ -121,6 +122,12 @@ class ResolveConflictParams(_Params):
 class SynthesizeParams(_Params):
     kind: Literal["synthesize"] = "synthesize"
     word_budget: int = 500
+    revision: int = 0
+
+
+class CritiqueParams(_Params):
+    kind: Literal["critique"] = "critique"
+    revision: int = 0
 
 
 StepParams = Annotated[
@@ -135,6 +142,7 @@ StepParams = Annotated[
         GapHuntParams,
         ResolveConflictParams,
         SynthesizeParams,
+        CritiqueParams,
     ],
     Field(discriminator="kind"),
 ]

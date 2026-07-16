@@ -2,15 +2,15 @@
 Agent behavior when all search providers return no hits.
 
 Ensures the assistant does not invent BibTeX entries after empty search results.
-Uses a mocked LLM — no live OpenAI calls.
+Uses a scripted chat model and stubbed tools — no live OpenAI or network calls.
 """
 
 from __future__ import annotations
 
 import re
-from unittest import mock
 
 import pytest
+from helpers_llm import ScriptedChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
 from agent.agent import AgentManager
@@ -26,141 +26,92 @@ _NO_RESULTS = re.compile(
     re.I,
 )
 
-
-@pytest.fixture
-def mock_empty_searches(monkeypatch: pytest.MonkeyPatch) -> None:
-    """All four scholarly search tools return empty lists."""
-    empty: list[Paper] = []
-
-    def _empty_search(*_a: object, **_k: object) -> list[Paper]:
-        return empty
-
-    import tools.search_tools as search_mod
-    import tools.tools_registry as registry_mod
-
-    for name in (
-        "tool_search_arxiv",
-        "tool_search_dblp",
-        "tool_search_semantic_scholar",
-        "tool_search_crossref",
-    ):
-        monkeypatch.setattr(search_mod, name, _empty_search)
-    monkeypatch.setattr(registry_mod, "TOOL_SPECS", registry_mod.build_tool_specs())
+_SEARCH_TOOLS = (
+    "tool_search_arxiv",
+    "tool_search_dblp",
+    "tool_search_semantic_scholar",
+    "tool_search_crossref",
+)
 
 
-def test_empty_search_does_not_fabricate_bibtex(
-    monkeypatch: pytest.MonkeyPatch,
-    mock_empty_searches: None,
-) -> None:
-    """
-    After mocked empty searches, the final reply must acknowledge no hits and
-    must not contain BibTeX entry blocks.
-    """
+def _empty_search(*_a: object, **_k: object) -> list[Paper]:
+    return []
+
+
+def _manager(monkeypatch: pytest.MonkeyPatch, responses: list[AIMessage]) -> AgentManager:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     import config.config as cfg
 
-    cfg.get_settings(reload=True)
+    settings = cfg.get_settings(reload=True)
+    return AgentManager(
+        api_key="test-key",
+        model="gpt-4o",
+        permission_manager=PermissionManager(settings),
+        model_instance=ScriptedChatModel(responses=responses),
+        tool_overrides={name: _empty_search for name in _SEARCH_TOOLS},
+    )
 
-    invoke_calls = 0
 
-    def fake_invoke(messages: list) -> AIMessage:  # type: ignore[type-arg]
-        nonlocal invoke_calls
-        invoke_calls += 1
-        if invoke_calls == 1:
-            return AIMessage(
+def test_empty_search_does_not_fabricate_bibtex(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    After stubbed empty searches, the final reply must acknowledge no hits and
+    must not contain BibTeX entry blocks.
+    """
+    mgr = _manager(
+        monkeypatch,
+        [
+            AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "id": "c1",
-                        "name": "tool_search_arxiv",
-                        "args": {"query": "Zyxnonexistent99", "filters": {"author": "Zyxnonexistent99"}},
-                    },
-                    {
-                        "id": "c2",
-                        "name": "tool_search_dblp",
-                        "args": {"query": "Zyxnonexistent99", "filters": {"author": "Zyxnonexistent99"}},
-                    },
-                    {
-                        "id": "c3",
-                        "name": "tool_search_semantic_scholar",
-                        "args": {"query": "Zyxnonexistent99", "filters": {"author": "Zyxnonexistent99"}},
-                    },
-                    {
-                        "id": "c4",
-                        "name": "tool_search_crossref",
-                        "args": {"query": "Zyxnonexistent99", "filters": {"author": "Zyxnonexistent99"}},
-                    },
+                        "id": f"c{i}",
+                        "name": name,
+                        "args": {
+                            "query": "Zyxnonexistent99",
+                            "filters": {"author": "Zyxnonexistent99"},
+                        },
+                    }
+                    for i, name in enumerate(_SEARCH_TOOLS, start=1)
                 ],
-            )
-        return AIMessage(
-            content=(
-                "I searched arXiv, DBLP, Semantic Scholar, and Crossref for author "
-                "'Zyxnonexistent99' but found no results. I cannot generate BibTeX without "
-                "verified paper metadata from a successful search."
-            )
-        )
-
-    mock_llm = mock.MagicMock()
-    mock_llm.invoke = fake_invoke
-    mock_bound = mock.MagicMock()
-    mock_bound.invoke = fake_invoke
-
-    def _empty_search(*_a: object, **_k: object) -> list[Paper]:
-        return []
-
-    with mock.patch("agent.agent.ChatOpenAI", return_value=mock_llm):
-        mock_llm.bind_tools.return_value = mock_bound
-        manager = AgentManager(
-            api_key="test-key",
-            model="gpt-4o",
-            permission_manager=PermissionManager(cfg.get_settings(reload=True)),
-        )
-        for tool_name in (
-            "tool_search_arxiv",
-            "tool_search_dblp",
-            "tool_search_semantic_scholar",
-            "tool_search_crossref",
-        ):
-            bound = manager._tool_map[tool_name]
-            manager._tool_map[tool_name] = bound.copy(update={"func": _empty_search})
-        result = manager.respond(
-            history=[
-                HumanMessage(
-                    content=(
-                        "Find papers by author Zyxnonexistent99 and give me BibTeX "
-                        "for the results."
-                    )
+            ),
+            AIMessage(
+                content=(
+                    "I searched arXiv, DBLP, Semantic Scholar, and Crossref for author "
+                    "'Zyxnonexistent99' but found no results. I cannot generate BibTeX "
+                    "without verified paper metadata from a successful search."
                 )
-            ],
-        )
+            ),
+        ],
+    )
 
-    text = result.message.content if isinstance(result.message.content, str) else str(
+    result = mgr.respond(
+        history=[
+            HumanMessage(
+                content=(
+                    "Find papers by author Zyxnonexistent99 and give me BibTeX "
+                    "for the results."
+                )
+            )
+        ],
+    )
+
+    text = (
         result.message.content
+        if isinstance(result.message.content, str)
+        else str(result.message.content)
     )
     assert _NO_RESULTS.search(text), f"Expected no-results wording, got: {text!r}"
     assert not _BIBTEX_ENTRY.search(text), f"Fabricated BibTeX in response: {text!r}"
-    assert invoke_calls >= 2
     assert result.tool_calls_executed == 4
 
 
-def test_output_guardrail_strips_fabricated_bibtex(
-    monkeypatch: pytest.MonkeyPatch,
-    mock_empty_searches: None,
-) -> None:
+def test_output_guardrail_strips_fabricated_bibtex(monkeypatch: pytest.MonkeyPatch) -> None:
     """When the model invents BibTeX after empty searches, the output guardrail replaces it."""
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    import config.config as cfg
-
-    cfg.get_settings(reload=True)
-
-    invoke_calls = 0
     fake_bib = "@article{zyx2024,\n  title = {Totally Fabricated},\n  author = {Z. Fake},\n}"
-
-    def fake_invoke(messages: list) -> AIMessage:  # type: ignore[type-arg]
-        nonlocal invoke_calls
-        invoke_calls += 1
-        if invoke_calls == 1:
-            return AIMessage(
+    mgr = _manager(
+        monkeypatch,
+        [
+            AIMessage(
                 content="",
                 tool_calls=[
                     {
@@ -169,34 +120,19 @@ def test_output_guardrail_strips_fabricated_bibtex(
                         "args": {"query": "Zyxnonexistent99"},
                     },
                 ],
-            )
-        return AIMessage(content=f"Here is your BibTeX:\n{fake_bib}")
+            ),
+            AIMessage(content=f"Here is your BibTeX:\n{fake_bib}"),
+        ],
+    )
 
-    mock_llm = mock.MagicMock()
-    mock_bound = mock.MagicMock()
-    mock_bound.invoke = fake_invoke
+    result = mgr.respond(
+        history=[HumanMessage(content="BibTeX for author Zyxnonexistent99")],
+    )
 
-    def _empty_search(*_a: object, **_k: object) -> list[Paper]:
-        return []
-
-    with mock.patch("agent.agent.ChatOpenAI", return_value=mock_llm):
-        mock_llm.bind_tools.return_value = mock_bound
-        manager = AgentManager(
-            api_key="test-key",
-            model="gpt-4o",
-            permission_manager=PermissionManager(cfg.get_settings(reload=True)),
-        )
-        manager._tool_map["tool_search_arxiv"] = manager._tool_map[
-            "tool_search_arxiv"
-        ].copy(update={"func": _empty_search})
-        result = manager.respond(
-            history=[HumanMessage(content="BibTeX for author Zyxnonexistent99")],
-        )
-
-    text = result.message.content if isinstance(result.message.content, str) else str(
+    text = (
         result.message.content
+        if isinstance(result.message.content, str)
+        else str(result.message.content)
     )
     assert text == EMPTY_SEARCH_SAFE_REPLY
     assert fake_bib not in text
-
-

@@ -100,6 +100,8 @@ def _stub_deps(**overrides: Any) -> SynthesisDeps:
         validate_cites=lambda text, papers: ([], [], [], 1.0),
         # No-op rewrite so no test ever reaches the real (network) reformulator.
         reformulate=lambda state, original: "",
+        # Clean critic: accepts every draft (tests opt into objections).
+        critique=lambda question, review_text, *a, **kw: ([], True),
     )
     defaults.update(overrides)
     return SynthesisDeps(**defaults)
@@ -149,8 +151,12 @@ def test_linear_run_reaches_review_with_full_trace() -> None:
         "extract_claims",
         "detect_contradictions",
         "synthesize",
+        "critique",
     ]
     assert all(s.result != "pending" for s in state.trace)
+    # A clean critique accepts the draft without a revision.
+    assert state.trace[-1].result == "ok"
+    assert state.objections == []
 
 
 def test_trace_steps_branch_causally_through_retrieval() -> None:
@@ -622,6 +628,105 @@ def test_papers_found_by_parallel_branches_deduplicate() -> None:
     shared = [p for p in state.papers if p.paper_id == "arxiv:shared"]
     assert len(shared) == 1
     assert len(state.papers) == 3
+
+
+def test_critic_objection_triggers_one_revision() -> None:
+    """An objecting critic sends the draft back to the writer exactly once."""
+    critiques: list[str] = []
+    drafts: list[str] = []
+
+    def critic(question: str, review_text: str, *a: Any, **kw: Any):
+        critiques.append(review_text)
+        if len(critiques) == 1:
+            return ["\"weak sentence\" — not supported by any claim"], True
+        return [], True
+
+    def generate(prompt: Any, **kw: Any) -> str:
+        drafts.append("draft")
+        if len(drafts) == 1:
+            return "First draft with a weak sentence."
+        # The revision prompt must carry the previous draft and the objection.
+        assert "First draft with a weak sentence." in prompt.user
+        assert "weak sentence" in prompt.user
+        return "Revised draft, fully grounded."
+
+    state = _run(_stub_deps(critique=critic, generate=generate))
+
+    assert state.review_text == "Revised draft, fully grounded."
+    assert len(critiques) == 2  # draft critiqued, revision re-critiqued
+    assert state.objections == []  # final pass came back clean
+    actions = [s.action for s in state.trace]
+    assert actions[-4:] == ["synthesize", "critique", "synthesize", "critique"]
+    revise_step = state.trace[-2]
+    assert revise_step.params.revision == 1
+    critique_steps = [s for s in state.trace if s.action == "critique"]
+    assert [s.result for s in critique_steps] == ["insufficient", "ok"]
+
+
+def test_revision_budget_caps_persistent_critic() -> None:
+    """A critic that never approves stops at max_revisions, keeping the last draft."""
+    calls = {"critic": 0, "writer": 0}
+
+    def stubborn_critic(question: str, review_text: str, *a: Any, **kw: Any):
+        calls["critic"] += 1
+        return ["\"grounded review\" — reviewer is never satisfied"], True
+
+    def generate(prompt: Any, **kw: Any) -> str:
+        calls["writer"] += 1
+        return "A grounded review."
+
+    state = _run(
+        _stub_deps(critique=stubborn_critic, generate=generate),
+        SynthesisConfig(min_relevance_score=0.0, max_revisions=2),
+    )
+
+    # Draft + 2 revisions; critic ran after each; loop then ended despite objections.
+    assert calls["writer"] == 3
+    assert calls["critic"] == 3
+    assert state.objections  # last critique still objected — honestly recorded
+    assert state.review_text == "A grounded review."
+    revisions = [
+        s.params.revision
+        for s in state.trace
+        if s.action == "synthesize" and s.params.revision > 0
+    ]
+    assert revisions == [1, 2]
+
+
+def test_critic_failure_accepts_draft() -> None:
+    def broken_critic(question: str, review_text: str, *a: Any, **kw: Any):
+        raise RuntimeError("critic exploded")
+
+    state = _run(_stub_deps(critique=broken_critic))
+
+    assert state.review_text == "A grounded review."
+    critique_step = next(s for s in state.trace if s.action == "critique")
+    assert critique_step.result == "failed"
+    assert state.objections == []
+
+
+def test_failed_revision_keeps_previous_draft() -> None:
+    """If the rewrite LLM call fails, the original draft survives."""
+    seen = {"n": 0}
+
+    def critic(question: str, review_text: str, *a: Any, **kw: Any):
+        seen["n"] += 1
+        if seen["n"] == 1:
+            return ["\"grounded review\" — objection"], True
+        return [], True
+
+    def generate(prompt: Any, **kw: Any) -> str:
+        if "Your previous draft" in str(getattr(prompt, "user", "")):
+            raise RuntimeError("rewrite exploded")
+        return "A grounded review."
+
+    state = _run(_stub_deps(critique=critic, generate=generate))
+
+    assert state.review_text == "A grounded review."
+    revise_step = next(
+        s for s in state.trace if s.action == "synthesize" and s.params.revision == 1
+    )
+    assert revise_step.result == "failed"
 
 
 def test_run_graph_synthesis_persists_and_reports_progress(tmp_path: Any) -> None:

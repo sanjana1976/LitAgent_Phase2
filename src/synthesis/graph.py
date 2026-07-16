@@ -56,6 +56,7 @@ from synthesis.trace import (
     DecomposeParams,
     DetectContradictionsParams,
     ExtractClaimsParams,
+    CritiqueParams,
     FilterRelevanceParams,
     GapHuntParams,
     ReformulateParams,
@@ -90,6 +91,7 @@ class SynthesisConfig:
     relevance_keep_threshold: int = 6
     hunt_paper_limit: int = 5
     max_concurrency: int = 4
+    max_revisions: int = 2
     sources: tuple[str, ...] = ("arxiv",)
 
 
@@ -153,6 +155,12 @@ def _real_reformulate(*args: Any, **kwargs: Any):
     return resolve_reformulated_query(*args, **kwargs)
 
 
+def _real_critique(*args: Any, **kwargs: Any):
+    from synthesis.critic import critique_review
+
+    return critique_review(*args, **kwargs)
+
+
 @dataclass
 class SynthesisDeps:
     """
@@ -175,6 +183,7 @@ class SynthesisDeps:
     generate: Callable[..., str] = field(default=_real_generate)
     validate_cites: Callable[..., tuple] = field(default=_real_validate_cites)
     reformulate: Callable[..., str] = field(default=_real_reformulate)
+    critique: Callable[..., tuple] = field(default=_real_critique)
 
 
 def _ctx(config: RunnableConfig | None) -> tuple[SynthesisConfig, SynthesisDeps]:
@@ -1044,6 +1053,203 @@ def synthesize_node(state: SynthesisState, config: RunnableConfig) -> dict[str, 
     }
 
 
+def _revisions_done(state: SynthesisState) -> int:
+    """How many revision drafts have been written (derived from the trace)."""
+    return sum(
+        1
+        for s in state.trace
+        if s.action == "synthesize"
+        and s.params.kind == "synthesize"
+        and s.params.revision > 0
+    )
+
+
+def critique_node(state: SynthesisState, config: RunnableConfig) -> dict[str, Any]:
+    """
+    Critic pass: raise checkable objections against the current draft.
+
+    Objections are validated by code (verbatim-excerpt check, deterministic
+    hallucinated-citation auto-objections) before they can trigger a
+    revision. ``objections`` has replace semantics, so a clean pass empties
+    it and ends the loop.
+    """
+    cfg, deps = _ctx(config)
+    if not state.review_text or not state.review_text.strip():
+        return {"objections": []}
+
+    revision = _revisions_done(state)
+    started = time.perf_counter()
+    params = CritiqueParams(revision=revision)
+    trigger = f"draft revision {revision} awaiting critique"
+    rationale = "verify the draft against the evidence before accepting it"
+    parent = _last_step_id(state)
+
+    try:
+        papers = rank_papers(
+            state.active_papers(),
+            question=state.question,
+            top_n=cfg.total_paper_limit,
+            min_score=cfg.min_relevance_score,
+        )
+        paper_ids = {p.paper_id for p in papers}
+        objections, used_llm = deps.critique(
+            state.question,
+            state.review_text,
+            papers,
+            [c for c in state.claims if c.paper_id in paper_ids],
+            [
+                pair
+                for pair in state.contradictions
+                if pair.paper_a in paper_ids and pair.paper_b in paper_ids
+            ],
+            list(state.hallucinated_citations),
+        )
+    except Exception as exc:  # noqa: BLE001 - the critic must never block a review
+        step = _completed_step(
+            action="critique",
+            params=params,
+            trigger=trigger,
+            rationale=rationale,
+            result="failed",
+            result_note=f"{type(exc).__name__}: {exc}",
+            parent_step_id=parent,
+            started=started,
+        )
+        return {"objections": [], "trace": [step]}
+
+    if not used_llm and not objections:
+        step = _completed_step(
+            action="critique",
+            params=params,
+            trigger=trigger,
+            rationale=rationale,
+            result="noop",
+            result_note="critic LLM unavailable; accepting draft as-is",
+            parent_step_id=parent,
+            started=started,
+        )
+        return {"objections": [], "trace": [step]}
+
+    step = _completed_step(
+        action="critique",
+        params=params,
+        trigger=trigger,
+        rationale=rationale,
+        result="insufficient" if objections else "ok",
+        result_note=(
+            f"raised {len(objections)} checkable objection(s): "
+            + "; ".join(o[:90] for o in objections)
+            if objections
+            else "draft is faithful to the evidence"
+        ),
+        parent_step_id=parent,
+        llm_calls=1 if used_llm else 0,
+        started=started,
+    )
+    return {"objections": list(objections), "trace": [step]}
+
+
+def route_after_critique(state: SynthesisState, config: RunnableConfig):
+    """Objections with revision budget left -> revise; otherwise accept and end."""
+    cfg, _ = _ctx(config)
+    if state.objections and _revisions_done(state) < cfg.max_revisions:
+        return "revise"
+    return END
+
+
+def revise_node(state: SynthesisState, config: RunnableConfig) -> dict[str, Any]:
+    """
+    Writer pass 2..N: regenerate the review with the critic's objections.
+
+    The synthesis prompt is rebuilt from the same evidence, then augmented
+    with the previous draft and the validated objections; citations are
+    re-validated on the new draft so the next critique sees fresh
+    deterministic signals.
+    """
+    cfg, deps = _ctx(config)
+    revision = _revisions_done(state) + 1
+    started = time.perf_counter()
+    params = SynthesizeParams(word_budget=cfg.word_budget, revision=revision)
+    trigger = f"critique raised {len(state.objections)} objection(s)"
+    rationale = "rewrite the review to fix every validated objection"
+    parent = _last_step_id(state)
+
+    try:
+        papers = rank_papers(
+            state.active_papers(),
+            question=state.question,
+            top_n=cfg.total_paper_limit,
+            min_score=cfg.min_relevance_score,
+        )
+        paper_ids = {p.paper_id for p in papers}
+        claims = [c for c in state.claims if c.paper_id in paper_ids]
+        contradictions = [
+            pair
+            for pair in state.contradictions
+            if pair.paper_a in paper_ids and pair.paper_b in paper_ids
+        ]
+        base_prompt = deps.build_prompt(
+            question=state.question,
+            papers=papers,
+            claims=claims,
+            contradictions=contradictions,
+            word_budget=cfg.word_budget,
+        )
+        from synthesis.prompt import SynthesisPrompt
+
+        objection_block = "\n".join(f"- {o}" for o in state.objections)
+        prompt = SynthesisPrompt(
+            system=str(getattr(base_prompt, "system", "")),
+            user=(
+                f"{getattr(base_prompt, 'user', '')}\n\n"
+                "Your previous draft:\n"
+                f"{state.review_text}\n\n"
+                "A reviewer validated the following objections against the "
+                "evidence. Rewrite the review and fix EVERY one of them. Keep "
+                "everything that was not objected to:\n"
+                f"{objection_block}"
+            ),
+            expected_citations=list(getattr(base_prompt, "expected_citations", []) or []),
+        )
+        review_text = deps.generate(prompt, word_budget=cfg.word_budget)
+        citation_checks, _used, hallucinated, _score = deps.validate_cites(
+            review_text, papers
+        )
+    except Exception as exc:  # noqa: BLE001 - a failed rewrite keeps the prior draft
+        step = _completed_step(
+            action="synthesize",
+            params=params,
+            trigger=trigger,
+            rationale=rationale,
+            result="failed",
+            result_note=f"{type(exc).__name__}: {exc}",
+            parent_step_id=parent,
+            started=started,
+        )
+        return {"trace": [step]}
+
+    step = _completed_step(
+        action="synthesize",
+        params=params,
+        trigger=trigger,
+        rationale=rationale,
+        result="ok" if review_text.strip() else "insufficient",
+        result_note=(
+            f"revision {revision} generated with {len(list(citation_checks))} citation "
+            f"check(s) and {len(list(hallucinated))} hallucinated citation(s)"
+        ),
+        parent_step_id=parent,
+        llm_calls=1,
+        started=started,
+    )
+    return {
+        "review_text": review_text,
+        "citation_checks": list(citation_checks),
+        "hallucinated_citations": list(hallucinated),
+        "trace": [step],
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Graph assembly + entry point
 # --------------------------------------------------------------------------- #
@@ -1079,6 +1285,8 @@ def _build_graph_definition() -> StateGraph:
     g.add_node("resolve_one", resolve_one_node)
     g.add_node("consolidate", consolidate_node)
     g.add_node("synthesize", synthesize_node)
+    g.add_node("critique", critique_node)
+    g.add_node("revise", revise_node)
 
     g.add_edge(START, "decompose")
     g.add_edge("decompose", "plan_search")
@@ -1097,7 +1305,9 @@ def _build_graph_definition() -> StateGraph:
     g.add_conditional_edges("plan_conflicts", fan_out_conflicts)
     g.add_edge("resolve_one", "consolidate")
     g.add_edge("consolidate", "synthesize")
-    g.add_edge("synthesize", END)
+    g.add_edge("synthesize", "critique")
+    g.add_conditional_edges("critique", route_after_critique)
+    g.add_edge("revise", "critique")
     return g
 
 
