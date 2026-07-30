@@ -1,0 +1,44 @@
+# .github/workflows/pr-agent.yml
+name: PR Agent
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  pr_agent_job:
+    # Must be: a PR (not an issue), a human, a slash command, and only devin can access it.
+    # Replace 123456789 with github numeric ID: look it up in this url: https://api.github.com/users/YOUR_USERNAME
+    if: >
+      github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      startsWith(github.event.comment.body, '/') &&
+      contains(fromJSON('[123456789]'), github.event.comment.user.id)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: pr-agent-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: PR Agent action step
+        # Digest from hub.docker.com/r/pragent/pr-agent/tags
+        #  uses: docker://pragent/pr-agent:0.34.2-github_action
+        # chnange models if needed 
+        uses: docker pull pragent/pr-agent:0.41.0-github_app
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_KEY }}
+          config.model: "anthropic/claude-sonnet-5"
+          config.fallback_models: '["anthropic/claude-3-5-haiku-20241022"]'
+          
+          # nothing triggered until asked 
+          config.restricted_mode: "true"
+          github_action_config.auto_review: "false"
+          github_action_config.auto_describe: "false"
+          github_action_config.auto_improve: "false"
+          config.ai_timeout: "300"
