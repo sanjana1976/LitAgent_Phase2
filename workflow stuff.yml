@@ -1,0 +1,77 @@
+# PR Agent — AI code review, manually triggered
+#   A run happens ONLY when all four of these are true:
+#     1. the comment is on a pull request (not a plain issue)
+#     2. the commenter is a human, not a bot
+#     3. the comment starts with "/"
+#     4. the commenter's GitHub user ID is in the allowlist below
+#
+# COMMANDS (comment these on a PR)
+#   /review              findings, security notes, review-effort estimate
+#   /describe            generates title, summary, walkthrough, labels
+#   /improve             code improvement suggestions
+#   /ask "question"      free-text Q&A about the PR
+#   Anything not starting with "/" is ignored 
+# WHAT IT CANNOT DO
+#   No `contents: write` permission, so it physically cannot push commits or
+#   modify code. It posts comments only. 
+#
+# TO ADD A REVIEWER
+#   Look up their numeric ID at https://api.github.com/users/THEIR_USERNAME
+#   and add it to the list: fromJSON('[123456, 12345678]')
+#   Use IDs, not usernames
+#
+# IF IT BREAKS
+#   Not in the Actions sidebar    -> file must be in .github/workflows/ 
+#   No run appears at all         -> the if: rejected it; check the user ID
+#   "Preparing review..." forever -> the model call failed; read the run log
+#   "Connection error"            -> issue with API key
+
+name: PR Agent
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  pr_agent_job:
+    if: >
+      github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      startsWith(github.event.comment.body, '/') &&
+      contains(fromJSON('[123456789]'), github.event.comment.user.id)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: pr-agent-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: PR Agent action step
+        # pr-agent 0.41.0-github_action, pinned by digest so a future
+        # compromise of the upstream project can't reach our API key.
+        # To upgrade: get the new digest from hub.docker.com/r/pragent/pr-agent/tags
+        uses: docker://pragent/pr-agent@sha256:3121a7b8e3ab497b4df09dea6a444da8f01a474496c8c2f722828512c52fd266
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Repo secret must be named exactly ANTHROPIC_KEY.
+          ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_KEY }}
+
+          config.model: "anthropic/claude-sonnet-5"
+          config.fallback_models: '["anthropic/claude-haiku-4-5-20251001"]'
+
+          # withholding fro letting agent commit
+          config.restricted_mode: "true"
+
+          config.propagate_tool_errors: "true"
+
+          # command-triggered only
+          github_action_config.auto_review: "false"
+          github_action_config.auto_describe: "false"
+          github_action_config.auto_improve: "false"
+
+          config.ai_timeout: "300"
