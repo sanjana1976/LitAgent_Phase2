@@ -1,13 +1,13 @@
-# .github/workflows/pr-agent.yml
 name: PR Agent
+
 on:
   issue_comment:
     types: [created]
+
 permissions: {}
+
 jobs:
   pr_agent_job:
-    # Must be: a PR (not an issue), a human, a slash command, and only devin can access it.
-    # Replace with github numeric ID: https://api.github.com/users/YOUR_USERNAME
     if: >
       github.event.issue.pull_request &&
       github.event.comment.user.type != 'Bot' &&
@@ -23,16 +23,12 @@ jobs:
       pull-requests: write
     steps:
       - name: PR Agent action step
-        # pr-agent 0.41.0-github_action, pinned by digest.
-        # New digests: hub.docker.com/r/pragent/pr-agent/tags
+        # pr-agent 0.41.0-github_action, pinned by digest
         uses: docker://pragent/pr-agent@sha256:3121a7b8e3ab497b4df09dea6a444da8f01a474496c8c2f722828512c52fd266
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
-          # omitting config.model uses PR-Agent's default (GPT-5.6)
           config.fallback_models: '["gpt-5.6-terra"]'
-
-          # nothing triggered until asked
           config.restricted_mode: "true"
           github_action_config.auto_review: "false"
           github_action_config.auto_describe: "false"
